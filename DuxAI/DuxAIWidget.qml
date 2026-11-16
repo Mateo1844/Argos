@@ -882,7 +882,7 @@ PluginComponent {
 
                         StyledText {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            text: "How can I help?"
+                            text: "Ask me anything."
                             font.pixelSize: root.fsTitle
                             color: Theme.onSurface
                         }
@@ -891,7 +891,7 @@ PluginComponent {
                             width: win.width - 60
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
-                            text: "Tip: right-click the bar icon or press Mod+Shift+A to ask about part of your screen. Highlight text and press Mod+Shift+X to ask about it."
+                            text: "Give me eyes by using the selection tools or Screen-viewer mode to give me context about your screen."
                             font.pixelSize: root.fsSmall
                             color: Theme.onSurfaceVariant
                         }
