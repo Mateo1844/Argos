@@ -22,6 +22,9 @@ subscription**. You don't need an API key.
 - **Ask about selected text:** highlight text anywhere (a PDF, a website, a
   terminal), then press **Mod+Shift+X** or the quote button in the chat. The
   text is attached as a quote. Needs `wl-clipboard`.
+- **Token counter:** a small grey number next to the pickers shows how many
+  tokens the current chat has used. Hover it to see the last answer's tokens
+  (input, how much of it was cached, output).
 - **History page:** open, continue or delete old chats. The bottom of the page
   shows how much disk space saved chats use.
 
@@ -113,8 +116,8 @@ In DMS Settings → Plugins → DUX-AI you can set:
 - bar icon color
 
 **Bar icon:** to use a logo (for example the official Claude logo), save it as
-`DuxAI/assets/logo.svg`. It shows inside the circle. Without it you get a
-sparkle icon.
+`DuxAI/assets/logo.svg`. It is shown in white inside the circle, in the bar
+and in the chat window. Without it you get a sparkle icon.
 
 ## Development
 

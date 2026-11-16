@@ -20,6 +20,43 @@ PluginComponent {
     popoutWidth: 460
     popoutHeight: 600
 
+    // Round colored circle with the logo inside (bar, chat header, empty
+    // screen). Shows a white copy of assets/logo.svg if it exists, otherwise
+    // a sparkle icon. (Inline component: no extra file for QML to find.)
+    component LogoCircle: Rectangle {
+        id: circle
+
+        property real size: 26
+        property color accent: "#D97757"
+        property string logoPath: ""
+        property bool hasLogo: false
+
+        width: size
+        height: size
+        radius: size / 2
+        color: accent
+
+        Image {
+            id: logo
+            anchors.centerIn: parent
+            width: circle.size * 0.62
+            height: width
+            source: circle.hasLogo ? "file://" + circle.logoPath : ""
+            sourceSize: Qt.size(128, 128)
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            visible: status === Image.Ready
+        }
+        DIcon {
+            anchors.centerIn: parent
+            visible: logo.status !== Image.Ready
+            name: "auto_awesome"
+            size: circle.size * 0.62
+            filled: true
+            color: "white"
+        }
+    }
+
     // ------------------------------------------------------------ settings --
     readonly property string backend: decodeURIComponent(String(Qt.resolvedUrl("backend/duxai.py")).replace("file://", ""))
     property string modelOverride: ""
@@ -61,6 +98,12 @@ PluginComponent {
     property var historyItems: []
     property string storageText: ""
     property bool confirmDeleteAll: false
+    property var tokens: null           // { total, context, last: { input, cached, output } }
+
+    function fmtTokens(n) {
+        n = n || 0;
+        return n < 1000 ? String(n) : (n < 100000 ? (n / 1000).toFixed(1) : Math.round(n / 1000)) + "k";
+    }
 
     signal focusInput
     signal scrollToEnd
@@ -214,6 +257,8 @@ PluginComponent {
             break;
         case "done":
             gotFinal = true;
+            if (ev.tokens)
+                tokens = ev.tokens;
             setLastText(ev.text, false);
             scrollToEnd();
             break;
@@ -248,6 +293,7 @@ PluginComponent {
             return;
         chatId = "";
         chatTitle = "";
+        tokens = null;
         messages.clear();
         view = "chat";
         focusInput();
@@ -287,6 +333,7 @@ PluginComponent {
                 messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", isError: false });
             chatId = ev.chat.id;
             chatTitle = ev.chat.title;
+            tokens = ev.tokens || null;
             view = "chat";
             scrollToEnd();
         });
@@ -672,7 +719,7 @@ PluginComponent {
                                     font.pixelSize: root.fsBody
                                 }
                                 StyledText {
-                                    text: Qt.formatDateTime(new Date(row.modelData.updated * 1000), "d MMM yyyy, HH:mm") + "  ·  " + row.modelData.model + "  ·  " + row.modelData.count + " messages"
+                                    text: Qt.formatDateTime(new Date(row.modelData.updated * 1000), "d MMM yyyy, HH:mm") + "  ·  " + row.modelData.model + "  ·  " + row.modelData.count + " messages" + (row.modelData.tokens ? "  ·  " + root.fmtTokens(row.modelData.tokens) + " tokens" : "")
                                     color: Theme.onSurfaceVariant
                                     font.pixelSize: root.fsSmall
                                 }
@@ -864,6 +911,21 @@ PluginComponent {
                             }
                             Item {
                                 Layout.fillWidth: true
+                            }
+
+                            // Discrete token counter; hover for details of the last answer.
+                            StyledText {
+                                visible: root.tokens !== null && root.tokens.total > 0
+                                text: !root.tokens ? "" : (tokenMouse.containsMouse && root.tokens.last
+                                    ? root.fmtTokens(root.tokens.last.input) + " in (" + root.fmtTokens(root.tokens.last.cached) + " cached) · " + root.fmtTokens(root.tokens.last.output) + " out"
+                                    : root.fmtTokens(root.tokens.total) + " tokens")
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.withAlpha(Theme.onSurfaceVariant, 0.75)
+                                MouseArea {
+                                    id: tokenMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                }
                             }
 
                             // Send / stop

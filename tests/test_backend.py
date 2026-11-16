@@ -52,6 +52,8 @@ class BackendTest(unittest.TestCase):
         chat = json.loads((self.data / "chats" / f"{done['chat']}.json").read_text())
         self.assertEqual(chat["title"], "Hi Claude")
         self.assertEqual([m["role"] for m in chat["messages"]], ["user", "assistant"])
+        self.assertEqual(done["tokens"]["total"], 128)   # fake claude: 120 in + 8 out
+        self.assertEqual(done["tokens"]["last"]["output"], 8)
         self.assertTrue(chat["session_id"])
 
         argv = self.calls()[0]["argv"]
@@ -107,6 +109,8 @@ class BackendTest(unittest.TestCase):
 
         loaded = self.run_backend("load", a)[-1]
         self.assertEqual(loaded["chat"]["id"], a)
+        self.assertEqual(loaded["tokens"]["total"], 128)
+        self.assertEqual(listing["chats"][0]["tokens"], 128)
         session = loaded["chat"]["session_id"]
         transcripts = list((Path(self.env["CLAUDE_CONFIG_DIR"]) / "projects").glob(f"*/{session}.jsonl"))
         self.assertEqual(len(transcripts), 1)
