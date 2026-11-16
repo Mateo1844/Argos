@@ -104,6 +104,27 @@ def new_chat(model, effort):
     }
 
 
+def token_stats(chat):
+    """Token counts for the chat window's usage label.
+
+    total   = everything sent + received over all turns (cached input included,
+              since every follow-up re-reads the conversation)
+    context = size of the conversation at the last turn
+    last    = what the last answer cost: input, of which cached, and output
+    """
+    total, last = 0, None
+    for msg in chat.get("messages", []):
+        u = msg.get("usage")
+        if not u:
+            continue
+        inp = sum(u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens",
+                                           "cache_creation_input_tokens"))
+        out = u.get("output_tokens") or 0
+        total += inp + out
+        last = {"input": inp, "cached": u.get("cache_read_input_tokens") or 0, "output": out}
+    return {"total": total, "context": (last["input"] + last["output"]) if last else 0, "last": last}
+
+
 def make_title(text):
     """Title = start of the first message (free: no extra API call)."""
     text = " ".join(text.split())
@@ -374,7 +395,7 @@ def cmd_ask(args):
                                                                      "cache_creation_input_tokens")}})
         chat["updated"] = now()
         save_chat(chat)
-        emit(type="done", chat=chat["id"], text=final, usage=usage, cost=cost)
+        emit(type="done", chat=chat["id"], text=final, usage=usage, cost=cost, tokens=token_stats(chat))
         return 0
 
     if stopped:
@@ -470,7 +491,8 @@ def cmd_logo(_args):
 def cmd_list(_args):
     chats = all_chats()
     items = [{"id": c["id"], "title": c.get("title", "Chat"), "updated": c.get("updated", 0),
-              "model": c.get("model", ""), "count": len(c.get("messages", []))} for c in chats]
+              "model": c.get("model", ""), "count": len(c.get("messages", [])),
+              "tokens": token_stats(c)["total"]} for c in chats]
     size = storage_bytes(chats)
     emit(type="list", chats=items, bytes=size, size=human_size(size))
     return 0
@@ -481,7 +503,7 @@ def cmd_load(args):
     if chat is None:
         emit(type="error", message="Chat not found")
         return 1
-    emit(type="chat", chat=chat)
+    emit(type="chat", chat=chat, tokens=token_stats(chat))
     return 0
 
 
