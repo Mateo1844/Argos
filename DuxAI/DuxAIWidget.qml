@@ -1019,15 +1019,15 @@ PluginComponent {
                     visible: root.view === "chat"
                     Layout.fillWidth: true
                     Layout.preferredHeight: inputCol.implicitHeight + 16
-                    radius: Theme.cornerRadius * 2
+                    radius: Theme.cornerRadius
                     color: Theme.withAlpha(Theme.onSurface, 0.06)
-                    border.width: input.activeFocus ? 1 : 0
-                    border.color: Theme.withAlpha(root.accent, 0.6)
+                    //border.width: input.activeFocus ? 1 : 0
+                    //border.color: Theme.withAlpha(root.accent, 0.6)
 
                     Column {
                         id: inputCol
                         x: 10
-                        y: 8
+                        y: 14
                         width: parent.width - 20
                         spacing: 6
 
@@ -1040,8 +1040,31 @@ PluginComponent {
                                 placeholderText: root.pendingImage || root.pendingQuote ? "Ask about your selection…" : "Ask Claude…"
                                 placeholderTextColor: Theme.onSurfaceVariant
                                 color: Theme.onSurface
+                                                                cursorDelegate: Rectangle {
+                                    id: cursor
+                                    property bool blinkOn: true
+                                    width: 2
+                                    color: Theme.onSurface
+                                    visible: input.cursorVisible && blinkOn
+
+                                    // Standard on/off blink at your system's blink speed
+                                    Timer {
+                                        id: blinkTimer
+                                        running: input.activeFocus && Qt.styleHints.cursorFlashTime > 0
+                                        repeat: true
+                                        interval: Qt.styleHints.cursorFlashTime / 2
+                                        onTriggered: cursor.blinkOn = !cursor.blinkOn
+                                    }
+                                    // Stay visible while you type or move the cursor
+                                    Connections {
+                                        target: input
+                                        function onCursorPositionChanged() {
+                                            cursor.blinkOn = true;
+                                            blinkTimer.restart();
+                                        }
+                                    }
+                                }
                                 font.pixelSize: root.fsBody
-                                wrapMode: TextArea.Wrap
                                 background: null
                                 padding: 0
                                 selectByMouse: true
