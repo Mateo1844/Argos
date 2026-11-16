@@ -1,6 +1,6 @@
 # DUX-AI
 
-Claude in your DankMaterialShell top bar. A small round button opens a chat
+Claude in your Dux Shell top bar. A small round button opens a chat
 window. You pick the model and thinking level, select part of your screen and
 ask about it, and browse or delete old chats.
 
