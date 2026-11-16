@@ -558,6 +558,7 @@ def cmd_ask(args):
                     pending[ev["request_id"]] = req.get("input", {})
                     emit(type="permission", id=ev["request_id"], tool=req.get("tool_name", ""),
                          summary=describe_tool(req.get("tool_name"), req.get("input")),
+                         plain=str((req.get("input") or {}).get("description") or ""),
                          reason=req.get("decision_reason") or req.get("description") or "")
                 else:
                     send_to_claude({"type": "control_response", "response": {

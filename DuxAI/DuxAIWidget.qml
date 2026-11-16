@@ -349,7 +349,8 @@ PluginComponent {
     property bool confirmDeleteAll: false
     property bool quickSettingsOpen: false
     property bool agentMode: pluginData.agentDefault ?? false
-    property var permission: null       // { id, summary, reason } while Claude waits for Allow/Deny
+    property var permission: null       // { id, summary, plain, reason } while Claude waits for Allow/Deny
+    property bool permCommandShown: false   // approval card: exact command expanded?
     property string windowApp: ""       // active window when the chat was opened
     property string windowTitle: ""
     readonly property string windowText: windowApp ? windowApp + (windowTitle ? " — " + windowTitle : "") : ""
@@ -580,7 +581,8 @@ PluginComponent {
             scrollToEnd();
             break;
         case "permission":
-            permission = { id: ev.id, summary: ev.summary, reason: ev.reason || "" };
+            permCommandShown = false;
+            permission = { id: ev.id, summary: ev.summary, plain: ev.plain || "", reason: ev.reason || "" };
             scrollToEnd();
             break;
         case "permission_cancel":
@@ -1221,15 +1223,38 @@ PluginComponent {
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                         }
+                        // Plain-English description first (falls back to the raw command)
                         StyledText {
+                            width: parent.width
+                            text: root.permission ? (root.permission.plain !== "" ? root.permission.plain : root.permission.summary) : ""
+                            wrapMode: Text.Wrap
+                            maximumLineCount: 6
+                            elide: Text.ElideRight
+                            font.pixelSize: root.fsSmall
+                            color: Theme.onSurface
+                        }
+                        // Expandable exact command (only when a plain description exists)
+                        StyledText {
+                            visible: root.permission !== null && root.permission.plain !== ""
+                            text: root.permCommandShown ? "Hide command ▴" : "Show command ▾"
+                            font.pixelSize: root.fsSmall - 1
+                            color: Theme.onSurfaceVariant
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.permCommandShown = !root.permCommandShown
+                            }
+                        }
+                        StyledText {
+                            visible: root.permCommandShown && root.permission !== null && root.permission.plain !== ""
                             width: parent.width
                             text: root.permission ? root.permission.summary : ""
                             wrapMode: Text.WrapAnywhere
                             maximumLineCount: 6
                             elide: Text.ElideRight
                             font.family: "monospace"
-                            font.pixelSize: root.fsSmall
-                            color: Theme.onSurface
+                            font.pixelSize: root.fsSmall - 1
+                            color: Theme.onSurfaceVariant
                         }
                         StyledText {
                             visible: text !== ""
@@ -1383,6 +1408,8 @@ PluginComponent {
                         ScrollView {
                             width: parent.width
                             height: Math.min(Math.max(input.implicitHeight, 24), 140)
+                            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                             TextArea {
                                 id: input
@@ -1417,6 +1444,9 @@ PluginComponent {
                                 background: null
                                 padding: 0
                                 selectByMouse: true
+                                wrapMode: TextArea.Wrap
+                                selectionColor: "#3584e4"
+                                selectedTextColor: "white"
 
                                 // Enter = send, Shift+Enter = new line
                                 Keys.onPressed: event => {
