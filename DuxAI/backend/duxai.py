@@ -28,6 +28,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -47,8 +48,32 @@ SYSTEM_PROMPT = (
     "(Linux, niri + DankMaterialShell). Be concise and direct: answer first, "
     "then add detail only if it helps. Use short Markdown (lists, code blocks) "
     "when useful. When the user attaches a screenshot, answer about what they "
-    "selected."
+    "selected. A message may start with [Active window: ...]: that is the app "
+    "the user was looking at; 'this file/folder/page' usually refers to it."
 )
+
+# Agent mode keeps Claude Code's own (tool-using) system prompt and adds this.
+AGENT_PROMPT = (
+    "You are running as DUX-AI, an assistant in the user's desktop top bar "
+    "(Linux, niri + DankMaterialShell), with access to their computer. Keep "
+    "replies short. A message may start with [Active window: app - title]: "
+    "'this folder/file/page' usually refers to that window (e.g. a Dolphin title "
+    "is the folder path). Every change you make is shown to the user for "
+    "approval; if they deny something, don't try to work around it."
+)
+
+# Added when the screen viewer is on (both modes).
+SCREEN_PROMPT = (
+    "You can look at the user's screen with the view_screen tool (active window, "
+    "or full=true for the whole monitor). Use it only when the user refers to "
+    "something on their screen that they didn't attach and the window title "
+    "isn't enough. Don't mention the tool, just answer."
+)
+SCREEN_TOOL = "mcp__duxai__view_screen"
+
+# Always blocked in agent mode, whatever the user clicks.
+ALWAYS_DENY = ["Bash(sudo *)", "Bash(rm -rf *)", "Bash(rm -fr *)",
+               "Read(~/.ssh/**)", "Edit(~/.ssh/**)", "Read(~/.gnupg/**)", "Edit(~/.gnupg/**)"]
 
 # Flags that cut tokens/startup work. Each one is only passed if the installed
 # `claude` version supports it (checked once via `claude --help`).
@@ -215,14 +240,33 @@ def supported_flags(claude):
         help_text = subprocess.run([claude, "--help"], capture_output=True, text=True, timeout=20).stdout
     except (OSError, subprocess.SubprocessError):
         help_text = ""
-    flags = [f for f in LEAN_FLAGS + ["--effort", "--tools"] if f in help_text]
+    flags = [f for f in LEAN_FLAGS + ["--effort", "--tools", "--permission-prompt-tool"] if f in help_text]
+    if '"manual"' in help_text:
+        flags.append("mode:manual")   # newer name of the "default" permission mode
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps({"key": key, "flags": flags}))
     return set(flags)
 
 
-def build_command(claude, flags, model, effort, session_id, web, extra_prompt):
-    system = SYSTEM_PROMPT + ("\n\n" + extra_prompt.strip() if extra_prompt.strip() else "")
+def mcp_config():
+    """Our own tiny tool server (this script with `mcp`): gives Claude view_screen."""
+    return json.dumps({"mcpServers": {"duxai": {
+        "type": "stdio", "command": sys.executable, "args": [str(Path(__file__).resolve()), "mcp"]}}})
+
+
+def lean_env(screen):
+    """Environment for normal chat. --safe-mode would also block our own tool
+    server, so with the screen viewer on we keep CLAUDE.md/memory out this way."""
+    env = dict(os.environ)
+    if screen:
+        env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
+        env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    return env
+
+
+def build_command(claude, flags, model, effort, session_id, web, extra_prompt, screen=False):
+    system = SYSTEM_PROMPT + ("\n\n" + SCREEN_PROMPT if screen else "")
+    system += ("\n\n" + extra_prompt.strip() if extra_prompt.strip() else "")
     cmd = [
         claude, "-p",
         "--input-format", "stream-json",      # lets us send images as content blocks
@@ -237,12 +281,105 @@ def build_command(claude, flags, model, effort, session_id, web, extra_prompt):
         # No tools = no tool definitions in the prompt (saves tokens).
         # With web search on, only the two web tools are offered.
         cmd += ["--tools", "WebSearch,WebFetch" if web else ""]
-    if web:
-        cmd += ["--allowedTools", "WebSearch,WebFetch"]
-    cmd += [f for f in LEAN_FLAGS if f in flags]
+    allowed = (["WebSearch", "WebFetch"] if web else []) + ([SCREEN_TOOL] if screen else [])
+    if allowed:
+        cmd += ["--allowedTools", ",".join(allowed)]
+    if screen:
+        cmd += ["--mcp-config", mcp_config()]
+    cmd += [f for f in LEAN_FLAGS if f in flags and not (screen and f == "--safe-mode")]
     if session_id:
         cmd += ["--resume", session_id]
     return cmd
+
+
+def rule_path(folder):
+    """Folder from the settings -> path for a permission rule.
+
+    Claude Code rules use ~/x for home-relative and //x for absolute paths.
+    """
+    folder = folder.strip().rstrip("/")
+    if folder.startswith("~/") or folder == "~":
+        return folder
+    if folder.startswith("/"):
+        return "/" + folder
+    return "~/" + folder   # "Documents/KUL" -> under home
+
+
+def split_folders(text):
+    return [f for f in (x.strip() for x in (text or "").split(",")) if f]
+
+
+def permission_rules(level, trusted, ask_dirs, deny_dirs, screen=False):
+    """Build the allow/ask/deny rules for agent mode.
+
+    deny  > ask > allow: a denied folder stays denied even if allowed elsewhere.
+    level "ask_all"     - every action needs approval, even reading files
+          "ask_changes" - reading is free, every change asks (Claude Code default)
+          "trusted"     - edits inside the trusted folders are free, rest asks
+    """
+    allow, ask, deny = [], [], list(ALWAYS_DENY)
+    for d in split_folders(deny_dirs):
+        deny += [f"Read({rule_path(d)}/**)", f"Edit({rule_path(d)}/**)"]
+    for d in split_folders(ask_dirs):
+        ask += [f"Edit({rule_path(d)}/**)"]
+    if level == "ask_all":
+        ask += ["Read", "Glob", "Grep", "Bash", "Edit", "WebFetch", "WebSearch"]
+    elif level == "trusted":
+        allow += [f"Edit({rule_path(d)}/**)" for d in split_folders(trusted)]
+    if screen and level != "ask_all":
+        allow.append(SCREEN_TOOL)        # looking at the screen doesn't change anything
+    return {"allow": allow, "ask": ask, "deny": deny}
+
+
+def build_agent_command(claude, flags, model, effort, session_id, extra_prompt, rules, screen=False):
+    """Agent mode: Claude Code with its normal tools, your settings and MCP
+    servers, and every permission question sent to us (shown as buttons)."""
+    system = AGENT_PROMPT + ("\n\n" + SCREEN_PROMPT if screen else "")
+    system += ("\n\n" + extra_prompt.strip() if extra_prompt.strip() else "")
+    cmd = [
+        claude, "-p",
+        "--input-format", "stream-json",
+        "--output-format", "stream-json",
+        "--verbose", "--include-partial-messages",
+        "--model", model,
+        "--append-system-prompt", system,
+        "--permission-prompt-tool", "stdio",   # ask us instead of a terminal prompt
+        "--permission-mode", "manual" if "mode:manual" in flags else "default",
+        "--settings", json.dumps({"permissions": rules}),
+        "--disallowedTools", "AskUserQuestion",
+    ]
+    if "--effort" in flags and effort:
+        cmd += ["--effort", effort]
+    if screen:
+        cmd += ["--mcp-config", mcp_config()]
+    if session_id:
+        cmd += ["--resume", session_id]
+    return cmd
+
+
+def describe_tool(name, inp):
+    """Short human description of a tool call, for the chat and the approve card."""
+    inp = inp or {}
+    home = str(Path.home())
+    short = lambda v: str(v).replace(home, "~")
+    if name == "Bash":
+        return "Run: " + short(inp.get("command", ""))
+    if name in ("Edit", "MultiEdit"):
+        return "Edit " + short(inp.get("file_path", ""))
+    if name == "Write":
+        return "Write " + short(inp.get("file_path", ""))
+    if name == "Read":
+        return "Read " + short(inp.get("file_path", ""))
+    if name in ("Glob", "Grep"):
+        return f"Search {short(inp.get('path', '') or '.')} for {inp.get('pattern', '')}"
+    if name == "WebFetch":
+        return "Open " + inp.get("url", "")
+    if name == "WebSearch":
+        return "Search the web: " + inp.get("query", "")
+    if name == "TodoWrite":
+        return "Update plan"
+    detail = json.dumps(inp)[:120]
+    return f"{name} {detail}"
 
 
 def prepare_image(path, max_side):
@@ -302,25 +439,64 @@ def cmd_ask(args):
         media, b64 = prepare_image(image_path, args.max_image_side)
         content.append({"type": "image", "source": {"type": "base64", "media_type": media, "data": b64}})
     quote = args.quote.strip()[:MAX_QUOTE_CHARS]
+    window = args.window.strip()[:300]
     prompt = args.prompt or ("What is this?" if image_path else "Explain this." if quote else "")
     if quote:
         prompt = f"<selected_text>\n{quote}\n</selected_text>\n\n{prompt}"
+    if window:
+        prompt = f"[Active window: {window}]\n\n{prompt}"
     content.append({"type": "text", "text": prompt})
 
     if not chat["messages"]:
         chat["title"] = make_title(args.prompt or quote or "Screenshot")
     chat["messages"].append({"role": "user", "text": args.prompt, "image": image_path,
-                             "quote": quote, "time": now()})
+                             "quote": quote, "window": window, "agent": args.agent, "time": now()})
     chat.update(model=args.model, effort=args.effort, updated=now())
     save_chat(chat)
 
     # --- run claude ---
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     flags = supported_flags(claude)
-    cmd = build_command(claude, flags, args.model, args.effort, session_id, args.web, args.extra)
+    if args.agent:
+        rules = permission_rules(args.perm, args.trusted, args.ask_dirs, args.deny_dirs, args.screen)
+        cmd = build_agent_command(claude, flags, args.model, args.effort, session_id, args.extra, rules,
+                                  args.screen)
+        cwd, env = Path.home(), None   # so "~/Downloads" etc. are inside its working folder
+    else:
+        cmd = build_command(claude, flags, args.model, args.effort, session_id, args.web, args.extra,
+                            args.screen)
+        cwd, env = WORK_DIR, lean_env(args.screen)
     errfile = tempfile.TemporaryFile(mode="w+")
-    proc = subprocess.Popen(cmd, cwd=WORK_DIR, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=errfile, text=True, bufsize=1)
+    write_lock = threading.Lock()
+
+    def send_to_claude(obj):
+        with write_lock:
+            try:
+                proc.stdin.write(json.dumps(obj) + "\n")
+                proc.stdin.flush()
+            except (BrokenPipeError, ValueError, OSError):
+                pass
+
+    # Allow/Deny clicks arrive on our stdin as {"id": ..., "allow": true}.
+    def answer_permissions():
+        for line in sys.stdin:
+            try:
+                msg = json.loads(line)
+                req = pending.pop(msg["id"])
+            except (ValueError, KeyError):
+                continue
+            if msg.get("allow"):
+                reply = {"behavior": "allow", "updatedInput": req}
+            else:
+                reply = {"behavior": "deny", "message": "The user denied this action."}
+            send_to_claude({"type": "control_response",
+                            "response": {"subtype": "success", "request_id": msg["id"], "response": reply}})
+
+    pending = {}   # request_id -> tool input
+    if args.agent:
+        threading.Thread(target=answer_permissions, daemon=True).start()
 
     stopped = False
 
@@ -334,15 +510,10 @@ def cmd_ask(args):
     signal.signal(signal.SIGTERM, on_stop)
     signal.signal(signal.SIGINT, on_stop)
 
-    user_msg = {"type": "user", "message": {"role": "user", "content": content},
-                "parent_tool_use_id": None, "session_id": session_id or ""}
-    try:
-        proc.stdin.write(json.dumps(user_msg) + "\n")
-        proc.stdin.flush()
-    except BrokenPipeError:
-        pass
+    send_to_claude({"type": "user", "message": {"role": "user", "content": content},
+                    "parent_tool_use_id": None, "session_id": session_id or ""})
 
-    text, result, thinking_sent = "", None, False
+    text, result, thinking_sent, steps = "", None, False, []
     try:
         for line in proc.stdout:
             try:
@@ -365,18 +536,46 @@ def cmd_ask(args):
                 elif e.get("type") == "content_block_start":
                     block = e.get("content_block", {})
                     if block.get("type") in ("tool_use", "server_tool_use"):
-                        emit(type="status", text="Searching the web…")
+                        name = block.get("name", "")
+                        emit(type="status", text="Looking at your screen…" if name == SCREEN_TOOL
+                             else "Searching the web…" if name.startswith("Web") or block.get("type") == "server_tool_use"
+                             else "Working…")
                     elif block.get("type") == "text":
                         thinking_sent = False
                         emit(type="status", text="")
+            elif kind == "assistant" and not ev.get("parent_tool_use_id"):
+                # Log what Claude does ("Read ~/x", "Run: ls") as small steps.
+                for block in ev.get("message", {}).get("content", []):
+                    if block.get("type") == "tool_use" and block.get("name") == SCREEN_TOOL:
+                        emit(type="status", text="Looking at your screen…")   # not logged as a step
+                    elif block.get("type") == "tool_use":
+                        step = describe_tool(block.get("name"), block.get("input"))
+                        steps.append(step)
+                        emit(type="step", text=step)
+            elif kind == "control_request":
+                req = ev.get("request", {})
+                if req.get("subtype") == "can_use_tool":
+                    pending[ev["request_id"]] = req.get("input", {})
+                    emit(type="permission", id=ev["request_id"], tool=req.get("tool_name", ""),
+                         summary=describe_tool(req.get("tool_name"), req.get("input")),
+                         plain=str((req.get("input") or {}).get("description") or ""),
+                         reason=req.get("decision_reason") or req.get("description") or "")
+                else:
+                    send_to_claude({"type": "control_response", "response": {
+                        "subtype": "error", "request_id": ev.get("request_id"),
+                        "error": "Not supported by DUX-AI"}})
+            elif kind == "control_cancel_request":
+                pending.pop(ev.get("request_id"), None)
+                emit(type="permission_cancel", id=ev.get("request_id"))
             elif kind == "result":
                 result = ev
                 break
     finally:
-        try:
-            proc.stdin.close()   # only now: closing early could cancel the turn
-        except OSError:
-            pass
+        with write_lock:
+            try:
+                proc.stdin.close()   # only now: closing early could cancel the turn
+            except OSError:
+                pass
         try:
             proc.wait(timeout=15)
         except subprocess.TimeoutExpired:
@@ -389,18 +588,20 @@ def cmd_ask(args):
         usage = result.get("usage") or {}
         chat["session_id"] = result.get("session_id") or chat.get("session_id")
         chat["cost_usd"] = cost  # claude reports the running total for the session
-        chat["messages"].append({"role": "assistant", "text": final, "time": now(),
+        chat["messages"].append({"role": "assistant", "text": final, "time": now(), "steps": steps,
                                  "usage": {k: usage.get(k) for k in ("input_tokens", "output_tokens",
                                                                      "cache_read_input_tokens",
                                                                      "cache_creation_input_tokens")}})
         chat["updated"] = now()
         save_chat(chat)
-        emit(type="done", chat=chat["id"], text=final, usage=usage, cost=cost, tokens=token_stats(chat))
+        emit(type="done", chat=chat["id"], text=final, usage=usage, cost=cost, tokens=token_stats(chat),
+             steps=steps)
         return 0
 
     if stopped:
         if text:
-            chat["messages"].append({"role": "assistant", "text": text + "\n\n*(stopped)*", "time": now()})
+            chat["messages"].append({"role": "assistant", "text": text + "\n\n*(stopped)*", "time": now(),
+                                     "steps": steps})
         save_chat(chat)
         emit(type="done", chat=chat["id"], text=text + ("\n\n*(stopped)*" if text else "*(stopped)*"),
              stopped=True)
@@ -415,14 +616,18 @@ def cmd_ask(args):
 
 # ------------------------------------------------------------- capture -----
 
-def cmd_capture(_args):
-    """Interactive region screenshot. Prefers DMS's own tool, else grim+slurp."""
+def cmd_capture(args):
+    """Region screenshot (or the focused window with --window).
+
+    Prefers DMS's own tool, else grim+slurp.
+    """
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     name = time.strftime("shot-%Y%m%d-%H%M%S")
     path = None
     if shutil.which("dms"):
+        mode = ["window"] if args.window else ["region", "--no-confirm", "--reset"]
         out = subprocess.run(
-            ["dms", "screenshot", "region", "--no-clipboard", "--no-notify", "--no-confirm", "--reset",
+            ["dms", "screenshot", *mode, "--no-clipboard", "--no-notify",
              "--json", "-d", str(IMAGES_DIR), "--filename", name + ".png"],
             capture_output=True, text=True)
         for line in out.stdout.splitlines():
@@ -445,6 +650,103 @@ def cmd_capture(_args):
         emit(type="captured", path=str(Path(path).resolve()))
         return 0
     emit(type="cancelled")
+    return 0
+
+
+def active_window():
+    """(app, title) of the focused window, via niri or Hyprland."""
+    try:
+        if shutil.which("niri"):
+            out = subprocess.run(["niri", "msg", "--json", "focused-window"],
+                                 capture_output=True, text=True, timeout=3)
+            win = json.loads(out.stdout or "null") or {}
+            app, title = win.get("app_id") or "", win.get("title") or ""
+        elif shutil.which("hyprctl"):
+            out = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=3)
+            win = json.loads(out.stdout or "{}") or {}
+            app, title = win.get("class") or "", win.get("title") or ""
+        else:
+            return "", ""
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "", ""
+    # "org.kde.dolphin" -> "Dolphin"
+    app = app.split(".")[-1].replace("-", " ").strip().title() if app else ""
+    return app, title.strip()
+
+
+def take_screenshot(full=False):
+    """Screenshot of the active window (or whole monitor). Returns a Path or None.
+
+    Keeps only the last 10 of these in images/agent.
+    """
+    folder = IMAGES_DIR / "agent"
+    folder.mkdir(parents=True, exist_ok=True)
+    for old in sorted(folder.glob("*.png"))[:-9]:
+        old.unlink(missing_ok=True)
+    path = folder / time.strftime("screen-%Y%m%d-%H%M%S.png")
+    if shutil.which("dms"):
+        out = subprocess.run(["dms", "screenshot", "full" if full else "window", "--no-clipboard",
+                              "--no-notify", "--json", "-d", str(folder), "--filename", path.name],
+                             capture_output=True, text=True)
+        for line in out.stdout.splitlines():
+            try:
+                meta = json.loads(line)
+            except ValueError:
+                continue
+            if meta.get("path"):
+                path = Path(meta["path"])
+    elif shutil.which("grim"):
+        subprocess.run(["grim", str(path)])
+    return path if path.is_file() and path.stat().st_size > 0 else None
+
+
+def cmd_mcp(_args):
+    """Minimal MCP server (JSON-RPC over stdin/stdout) with one tool: view_screen.
+
+    Claude Code starts this itself (see mcp_config). The screenshot goes back
+    to Claude as an image, so the user never sees a command for it.
+    """
+    tool = {
+        "name": "view_screen",
+        "description": "Take a screenshot of the user's active window (or the whole monitor with "
+                       "full=true) and look at it.",
+        "inputSchema": {"type": "object", "properties": {
+            "full": {"type": "boolean", "description": "Whole monitor instead of the active window"}}},
+    }
+    for line in sys.stdin:
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if "id" not in msg:
+            continue   # notifications need no answer
+        method, result = msg.get("method"), None
+        if method == "initialize":
+            result = {"protocolVersion": msg.get("params", {}).get("protocolVersion", "2025-06-18"),
+                      "capabilities": {"tools": {}}, "serverInfo": {"name": "duxai", "version": "0.1"}}
+        elif method == "tools/list":
+            result = {"tools": [tool]}
+        elif method == "tools/call":
+            full = bool(msg.get("params", {}).get("arguments", {}).get("full"))
+            shot = take_screenshot(full)
+            if shot:
+                media, b64 = prepare_image(str(shot), 1280)
+                result = {"content": [{"type": "image", "data": b64, "mimeType": media}]}
+            else:
+                result = {"content": [{"type": "text", "text": "Screenshot failed."}], "isError": True}
+        elif method == "ping":
+            result = {}
+        if result is None:
+            reply = {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "Unknown method"}}
+        else:
+            reply = {"jsonrpc": "2.0", "id": msg["id"], "result": result}
+        print(json.dumps(reply), flush=True)
+    return 0
+
+
+def cmd_window(_args):
+    app, title = active_window()
+    emit(type="window", app=app, title=title)
     return 0
 
 
@@ -528,6 +830,13 @@ def main(argv=None):
     ask.add_argument("--effort", default="medium")
     ask.add_argument("--image", default="")
     ask.add_argument("--quote", default="", help="selected text to ask about")
+    ask.add_argument("--window", default="", help='active window, e.g. "Dolphin - ~/Downloads"')
+    ask.add_argument("--agent", action="store_true", help="let Claude use your computer (asks first)")
+    ask.add_argument("--screen", action="store_true", help="let Claude look at your screen when needed")
+    ask.add_argument("--perm", default="ask_changes", choices=["ask_all", "ask_changes", "trusted"])
+    ask.add_argument("--trusted", default="", help="agent: comma-separated folders it may edit freely")
+    ask.add_argument("--ask-dirs", default="", help="agent: folders where edits always ask")
+    ask.add_argument("--deny-dirs", default="", help="agent: folders it may never touch")
     ask.add_argument("--web", action="store_true", help="allow web search tools")
     ask.add_argument("--max-image-side", type=int, default=1280)
     ask.add_argument("--extra", default="", help="extra system prompt instructions")
@@ -541,7 +850,11 @@ def main(argv=None):
     delete = sub.add_parser("delete")
     delete.add_argument("id", help='chat id or "all"')
     delete.set_defaults(func=cmd_delete)
-    sub.add_parser("capture").set_defaults(func=cmd_capture)
+    capture = sub.add_parser("capture")
+    capture.add_argument("--window", action="store_true", help="screenshot the focused window")
+    capture.set_defaults(func=cmd_capture)
+    sub.add_parser("window").set_defaults(func=cmd_window)
+    sub.add_parser("mcp", help="tool server Claude Code starts for view_screen").set_defaults(func=cmd_mcp)
     sub.add_parser("selection").set_defaults(func=cmd_selection)
     sub.add_parser("logo").set_defaults(func=cmd_logo)
 

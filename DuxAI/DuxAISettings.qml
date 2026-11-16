@@ -64,6 +64,13 @@ PluginSettings {
         defaultValue: false
     }
 
+    ToggleSetting {
+        settingKey: "screenViewer"
+        label: "Screen viewer"
+        description: "Claude may take a screenshot of your active window when you ask about something on screen that you didn't select. Also in the chat's quick settings (gear)."
+        defaultValue: true
+    }
+
     SelectionSetting {
         settingKey: "maxImageSide"
         label: "Screenshot size limit"
@@ -82,6 +89,73 @@ PluginSettings {
         label: "Extra instructions"
         description: "Added to the system prompt, e.g. \"Answer in Dutch\"."
         placeholder: "Optional"
+        defaultValue: ""
+    }
+
+    ToggleSetting {
+        settingKey: "includeWindow"
+        label: "Include active window"
+        description: "Quietly tells Claude which app and window title you were looking at (about 20 tokens), so \"this folder\" or \"this file\" works. Tip: in Dolphin turn on Configure → Interface → \"Show the full path inside the title bar\"."
+        defaultValue: true
+    }
+
+    StyledText {
+        width: parent.width
+        topPadding: Theme.spacingM
+        text: "Agent mode"
+        font.pixelSize: Theme.fontSizeLarge
+        font.weight: Font.Bold
+        color: Theme.onSurface
+    }
+
+    StyledText {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        text: "With the Agent button on, Claude can read files and run commands on your PC, using your normal Claude Code setup (settings, MCP servers). Changes wait for your Allow/Deny. sudo, rm -rf, ~/.ssh and ~/.gnupg are always blocked. Uses more tokens than normal chat."
+        font.pixelSize: Theme.fontSizeSmall
+        color: Theme.onSurfaceVariant
+    }
+
+    ToggleSetting {
+        settingKey: "agentDefault"
+        label: "Start in agent mode"
+        description: "Agent button turned on when the shell starts."
+        defaultValue: false
+    }
+
+    SelectionSetting {
+        settingKey: "permLevel"
+        label: "Permission level"
+        description: "What Claude may do without asking."
+        options: [
+            { label: "Ask for everything (even reading)", value: "ask_all" },
+            { label: "Ask for changes (recommended)", value: "ask_changes" },
+            { label: "Trusted folders: free edits there", value: "trusted" }
+        ]
+        defaultValue: "ask_changes"
+    }
+
+    StringSetting {
+        settingKey: "trustedFolders"
+        label: "Trusted folders"
+        description: "Only with \"Trusted folders\": Claude may edit files here without asking. Comma-separated."
+        placeholder: "~/DUX-AI, ~/Projects"
+        defaultValue: ""
+    }
+
+    StringSetting {
+        settingKey: "askFolders"
+        label: "Always ask for these folders"
+        description: "Edits here always need your OK, whatever the level. Comma-separated."
+        placeholder: "~/Documents/KUL"
+        defaultValue: ""
+    }
+
+    StringSetting {
+        settingKey: "denyFolders"
+        label: "Never touch these folders"
+        description: "Claude can't read or edit these at all. Comma-separated."
+        placeholder: "~/Private"
         defaultValue: ""
     }
 

@@ -28,6 +28,44 @@ subscription**. You don't need an API key.
 - **History page:** open, continue or delete old chats. The bottom of the page
   shows how much disk space saved chats use.
 
+## Agent mode (Claude uses your PC)
+
+Turn on the **Agent** chip next to the pickers. Claude can then read files and
+run commands on your computer, using your normal Claude Code setup (your
+settings, permissions and MCP servers). Its prompt runs in your home folder.
+
+- **It asks before changing anything.** An *Allow / Deny* card shows the
+  exact command or file. Every action Claude takes is listed as a small grey
+  step above its answer.
+- **Permission level** (Settings): *Ask for everything*, *Ask for changes*
+  (default), or *Trusted folders* (free edits only inside folders you list).
+- **Folder lists:** *Always ask for these folders* and *Never touch these
+  folders*. The order of precedence is deny > ask > allow.
+- **Always blocked:** `sudo`, `rm -rf`, `~/.ssh` and `~/.gnupg`, whatever you
+  click.
+- **Seeing your screen:** with the screen viewer on, the agent can look at
+  your screen without asking (except at the *Ask for everything* level).
+- **Cost:** it uses more tokens than the normal chat, because Claude Code's
+  tools and instructions are sent along. Normal chat stays lean.
+
+The folder rules cover Claude's file tools. A shell command could still touch
+a file, so every command that changes something asks first and shows the full
+command. Keep backups of important work anyway.
+
+## Active window and screen viewer
+
+- **Active window:** DUX-AI quietly sends along which app and window title you
+  were looking at (about 20 tokens). That's how "rename the files in this
+  folder" or "explain this file" works. In Dolphin, turn on *Configure Dolphin →
+  Interface → Show the full path inside the title bar* to send the full path.
+- **Screen viewer:** when you ask about something on screen that you didn't
+  select, Claude can take a screenshot of your active window by itself and
+  look at it. This works in normal chat and in agent mode. It happens through
+  a small built-in tool, so no command or Allow/Deny card shows up. The
+  chat only says "Looking at your screen…" while it happens.
+- **Gear button in the chat:** quick switches for *Web search* and *Screen
+  viewer*. The same options are in the plugin settings.
+
 ## Install (Fedora + niri + DMS)
 
 ```bash

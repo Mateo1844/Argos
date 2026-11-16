@@ -8,6 +8,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Common
 import qs.Services
 import qs.DCommon.Widgets
@@ -71,7 +72,7 @@ PluginComponent {
             return current;
         }
 
-        implicitWidth: row.implicitWidth + 20
+        implicitWidth: row.implicitWidth + 16
         implicitHeight: 30
 
         Rectangle {
@@ -176,6 +177,76 @@ PluginComponent {
         }
     }
 
+    // A row with icon, label, hint and an on/off switch (quick settings).
+    component SwitchRow: Rectangle {
+        id: sw
+        property string icon: ""
+        property string label: ""
+        property string hint: ""
+        property bool checked: false
+        signal toggled
+
+        implicitHeight: 52
+        radius: Theme.cornerRadius
+        color: swMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.06) : "transparent"
+
+        DIcon {
+            id: swIcon
+            x: 10
+            anchors.verticalCenter: parent.verticalCenter
+            name: sw.icon
+            size: 18
+            color: sw.checked ? root.accent : Theme.onSurfaceVariant
+        }
+        Column {
+            anchors.left: swIcon.right
+            anchors.leftMargin: 10
+            anchors.right: track.left
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            StyledText {
+                text: sw.label
+                font.pixelSize: Theme.fontSizeMedium
+                color: Theme.onSurface
+            }
+            StyledText {
+                width: parent.width
+                text: sw.hint
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.onSurfaceVariant
+            }
+        }
+        Rectangle {
+            id: track
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            anchors.verticalCenter: parent.verticalCenter
+            width: 36
+            height: 20
+            radius: 10
+            color: sw.checked ? root.accent : Theme.withAlpha(Theme.onSurface, 0.2)
+            Rectangle {
+                width: 14
+                height: 14
+                radius: 7
+                anchors.verticalCenter: parent.verticalCenter
+                x: sw.checked ? parent.width - width - 3 : 3
+                color: "white"
+                Behavior on x {
+                    NumberAnimation { duration: 120 }
+                }
+            }
+        }
+        MouseArea {
+            id: swMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sw.toggled()
+        }
+    }
+
     // Round colored circle with the logo inside (bar, chat header, empty
     // screen). Shows a white copy of assets/logo.svg if it exists, otherwise
     // a sparkle icon. (Inline component: no extra file for QML to find.)
@@ -223,9 +294,25 @@ PluginComponent {
     property string effortOverride: ""
     readonly property string model: modelOverride || pluginData.model || "sonnet"
     readonly property string effort: effortOverride || pluginData.effort || "medium"
-    readonly property bool allowWeb: pluginData.allowWeb ?? false
+    // Quick settings (gear in the chat header); also in the plugin settings page.
+    property bool allowWeb: pluginData.allowWeb ?? false
+    property bool screenViewer: pluginData.screenViewer ?? true   // Claude may look at the screen when needed
+
+    function setQuick(key, value) {
+        if (key === "allowWeb")
+            allowWeb = value;
+        else if (key === "screenViewer")
+            screenViewer = value;
+        pluginService?.savePluginData("duxAi", key, value);
+    }
     readonly property int maxImageSide: parseInt(pluginData.maxImageSide || "1280")
     readonly property string extraInstructions: pluginData.extraInstructions || ""
+    readonly property bool includeWindow: pluginData.includeWindow ?? true
+    // Agent mode (Claude may use your computer, asks before changes)
+    readonly property string permLevel: pluginData.permLevel || "ask_changes"
+    readonly property string trustedFolders: pluginData.trustedFolders || ""
+    readonly property string askFolders: pluginData.askFolders || ""
+    readonly property string denyFolders: pluginData.denyFolders || ""
     readonly property bool useThemeColor: pluginData.pillColor === "theme"
     readonly property color accent: useThemeColor ? Theme.primary : "#D97757"
     readonly property bool pillTransparent: pluginData.pillColor === "transparent"
@@ -260,6 +347,13 @@ PluginComponent {
     property var historyItems: []
     property string storageText: ""
     property bool confirmDeleteAll: false
+    property bool quickSettingsOpen: false
+    property bool agentMode: pluginData.agentDefault ?? false
+    property var permission: null       // { id, summary, plain, reason } while Claude waits for Allow/Deny
+    property bool permCommandShown: false   // approval card: exact command expanded?
+    property string windowApp: ""       // active window when the chat was opened
+    property string windowTitle: ""
+    readonly property string windowText: windowApp ? windowApp + (windowTitle ? " — " + windowTitle : "") : ""
     property var tokens: null           // { total, context, last: { input, cached, output } }
 
     function fmtTokens(n) {
@@ -271,7 +365,7 @@ PluginComponent {
     signal scrollToEnd
 
     ListModel {
-        id: messages   // { role, text, image, quote, isError }
+        id: messages   // { role, text, image, quote, window, steps, isError }
     }
 
     function setModel(value) {
@@ -282,6 +376,48 @@ PluginComponent {
     function setEffort(value) {
         effortOverride = value;
         pluginService?.savePluginData("duxAi", "effort", value);
+    }
+
+    // ------------------------------------------------------- active window --
+    // Which app/window you were looking at, so "this folder" etc. makes sense.
+    // We remember the last real window continuously: once the chat is open it
+    // has keyboard focus itself, so asking the compositor *then* returns nothing.
+    property var lastToplevel: null
+    readonly property Toplevel activeToplevel: ToplevelManager.activeToplevel
+    onActiveToplevelChanged: {
+        if (activeToplevel && (activeToplevel.appId || activeToplevel.title))
+            lastToplevel = activeToplevel;
+    }
+
+    function prettyApp(appId) {
+        // "org.kde.dolphin" -> "Dolphin"
+        const last = (appId || "").split(".").pop().replace(/-/g, " ").trim();
+        return last ? last.charAt(0).toUpperCase() + last.slice(1) : "";
+    }
+
+    function fetchWindow() {
+        if (!includeWindow || busy)
+            return;
+        if (lastToplevel && (lastToplevel.appId || lastToplevel.title)) {
+            const app = prettyApp(lastToplevel.appId);
+            const title = lastToplevel.title || "";
+            windowApp = app;
+            windowTitle = title;
+            return;
+        }
+        // Fallback: ask the compositor (niri / Hyprland) via the backend.
+        Proc.runCommand("duxAi.window", ["python3", backend, "window"], out => {
+            const ev = lastJson(out);
+            if (ev?.type !== "window")
+                return;
+            windowApp = ev.app;
+            windowTitle = ev.title;
+        });
+    }
+
+    onInteractionActiveChanged: {
+        if (interactionActive)
+            fetchWindow();
     }
 
     // ------------------------------------------------------- popout control --
@@ -309,6 +445,7 @@ PluginComponent {
 
     // ------------------------------------------------------------- capture --
     function startCapture() {
+        fetchWindow();
         root.closePopout();          // get the window out of the way first
         captureTimer.restart();
     }
@@ -330,6 +467,7 @@ PluginComponent {
 
     // Text highlighted anywhere on screen (Wayland primary selection).
     function grabSelection() {
+        fetchWindow();
         Proc.runCommand("duxAi.selection", ["python3", root.backend, "selection"], (out, code) => {
             const ev = root.lastJson(out);
             if (ev?.type === "selection") {
@@ -353,8 +491,9 @@ PluginComponent {
         if (busy || (!text && !pendingImage && !pendingQuote))
             return false;
 
-        messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, isError: false });
-        messages.append({ role: "assistant", text: "", image: "", quote: "", isError: false });
+        const win = includeWindow ? windowText : "";   // sent along invisibly
+        messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, window: win, steps: "", isError: false });
+        messages.append({ role: "assistant", text: "", image: "", quote: "", window: "", steps: "", isError: false });
         if (!chatId)
             chatTitle = shortTitle(text || pendingQuote);
 
@@ -368,8 +507,15 @@ PluginComponent {
             cmd.push("--quote=" + pendingQuote);
         if (allowWeb)
             cmd.push("--web");
+        if (screenViewer)
+            cmd.push("--screen");
         if (extraInstructions)
             cmd.push("--extra=" + extraInstructions);
+        if (win)
+            cmd.push("--window=" + win);
+        if (agentMode)
+            cmd.push("--agent", "--perm=" + permLevel, "--trusted=" + trustedFolders,
+                     "--ask-dirs=" + askFolders, "--deny-dirs=" + denyFolders);
         cmd.push("--", text);
 
         pendingImage = "";
@@ -383,7 +529,16 @@ PluginComponent {
         return true;
     }
 
+    // Allow / Deny buttons -> backend stdin -> Claude Code.
+    function answerPermission(allow) {
+        if (!permission)
+            return;
+        askProc.write(JSON.stringify({ id: permission.id, allow: allow }) + "\n");
+        permission = null;
+    }
+
     function stop() {
+        permission = null;
         if (askProc.running)
             askProc.running = false;   // SIGTERM: backend stops claude and keeps the partial answer
     }
@@ -417,6 +572,23 @@ PluginComponent {
         case "status":
             status = ev.text;
             break;
+        case "step":
+            if (last >= 0) {
+                const steps = messages.get(last).steps;
+                messages.setProperty(last, "steps", steps ? steps + "\n" + ev.text : ev.text);
+            }
+            status = ev.text;
+            scrollToEnd();
+            break;
+        case "permission":
+            permCommandShown = false;
+            permission = { id: ev.id, summary: ev.summary, plain: ev.plain || "", reason: ev.reason || "" };
+            scrollToEnd();
+            break;
+        case "permission_cancel":
+            if (permission && permission.id === ev.id)
+                permission = null;
+            break;
         case "done":
             gotFinal = true;
             if (ev.tokens)
@@ -434,6 +606,7 @@ PluginComponent {
 
     Process {
         id: askProc
+        stdinEnabled: true             // used to send Allow/Deny answers
         stdout: SplitParser {
             onRead: line => root.handleEvent(line)
         }
@@ -445,6 +618,7 @@ PluginComponent {
                 root.setLastText(partial ? partial + "\n\n*(stopped)*" : "Stopped (backend exit code " + code + ").", !partial);
             }
             root.busy = false;
+            root.permission = null;
             root.status = "";
             root.refreshHistory();
         }
@@ -492,7 +666,7 @@ PluginComponent {
                 return;
             messages.clear();
             for (const m of ev.chat.messages)
-                messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", isError: false });
+                messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", window: m.window || "", steps: (m.steps || []).join("\n"), isError: false });
             chatId = ev.chat.id;
             chatTitle = ev.chat.title;
             tokens = ev.tokens || null;
@@ -519,6 +693,8 @@ PluginComponent {
     readonly property bool hasLogo: logoPath !== ""
 
     Component.onCompleted: {
+        if (activeToplevel && (activeToplevel.appId || activeToplevel.title))
+            lastToplevel = activeToplevel;
         refreshHistory();
         Proc.runCommand("duxAi.logo", ["python3", backend, "logo"], out => {
             const ev = lastJson(out);
@@ -596,6 +772,45 @@ PluginComponent {
                 z: 100
             }
 
+            // ---- quick settings panel (gear button) ----
+            Rectangle {
+                visible: root.quickSettingsOpen
+                z: 200
+                anchors.right: parent.right
+                y: 40
+                width: 280
+                height: quickCol.implicitHeight + 16
+                radius: Theme.cornerRadius
+                color: Theme.surfaceContainerHigh
+                border.width: 1
+                border.color: Theme.outlineVariant
+
+                Column {
+                    id: quickCol
+                    x: 8
+                    y: 8
+                    width: parent.width - 16
+                    spacing: 2
+
+                    SwitchRow {
+                        width: parent.width
+                        icon: "travel_explore"
+                        label: "Web search"
+                        hint: "Claude may search the internet"
+                        checked: root.allowWeb
+                        onToggled: root.setQuick("allowWeb", !root.allowWeb)
+                    }
+                    SwitchRow {
+                        width: parent.width
+                        icon: "visibility"
+                        label: "Screen viewer"
+                        hint: "Claude may look at your screen when you ask about it"
+                        checked: root.screenViewer
+                        onToggled: root.setQuick("screenViewer", !root.screenViewer)
+                    }
+                }
+            }
+
             ColumnLayout {
                 anchors.fill: parent
                 spacing: Theme.spacingS
@@ -646,6 +861,11 @@ PluginComponent {
                                 root.refreshHistory();
                         }
                     }
+                    IconBtn {
+                        icon: "settings"
+                        active: root.quickSettingsOpen
+                        onClicked: root.quickSettingsOpen = !root.quickSettingsOpen
+                    }
                 }
 
                 // ---- chat view ----
@@ -693,6 +913,8 @@ PluginComponent {
                             required property string text
                             required property string image
                             required property string quote
+                            required property string window
+                            required property string steps
                             required property bool isError
                             readonly property bool isUser: role === "user"
                             readonly property bool isLast: index === messages.count - 1
@@ -780,6 +1002,36 @@ PluginComponent {
                                             font.italic: true
                                             font.pixelSize: root.fsSmall
                                             color: Theme.onSurfaceVariant
+                                        }
+                                    }
+
+                                    // Agent mode: what Claude did ("Read ~/x", "Run: ls")
+                                    Column {
+                                        visible: !msg.isUser && msg.steps !== ""
+                                        width: content.width
+                                        spacing: 2
+                                        Repeater {
+                                            model: msg.steps ? msg.steps.split("\n") : []
+                                            Row {
+                                                required property string modelData
+                                                width: content.width
+                                                spacing: 6
+                                                DIcon {
+                                                    name: "subdirectory_arrow_right"
+                                                    size: 14
+                                                    color: Theme.withAlpha(Theme.onSurfaceVariant, 0.8)
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+                                                StyledText {
+                                                    width: parent.width - 20
+                                                    text: modelData
+                                                    elide: Text.ElideRight
+                                                    font.family: "monospace"
+                                                    font.pixelSize: root.fsSmall - 1
+                                                    color: Theme.withAlpha(Theme.onSurfaceVariant, 0.8)
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+                                            }
                                         }
                                     }
 
@@ -938,6 +1190,128 @@ PluginComponent {
                     }
                 }
 
+                // ---- Allow / Deny card (agent mode) ----
+                Rectangle {
+                    visible: root.view === "chat" && root.permission !== null
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: permCol.implicitHeight + 20
+                    radius: Theme.cornerRadius
+                    color: Theme.withAlpha(root.accent, 0.10)
+                    border.width: 1
+                    border.color: Theme.withAlpha(root.accent, 0.55)
+
+                    Column {
+                        id: permCol
+                        x: 12
+                        y: 10
+                        width: parent.width - 24
+                        spacing: 8
+
+                        Row {
+                            spacing: 6
+                            DIcon {
+                                name: "shield_question"
+                                size: 18
+                                color: root.accent
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            StyledText {
+                                text: "Claude wants to:"
+                                font.pixelSize: root.fsSmall
+                                font.weight: Font.Medium
+                                color: Theme.onSurface
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        // Plain-English description first (falls back to the raw command)
+                        StyledText {
+                            width: parent.width
+                            text: root.permission ? (root.permission.plain !== "" ? root.permission.plain : root.permission.summary) : ""
+                            wrapMode: Text.Wrap
+                            maximumLineCount: 6
+                            elide: Text.ElideRight
+                            font.pixelSize: root.fsSmall
+                            color: Theme.onSurface
+                        }
+                        // Expandable exact command (only when a plain description exists)
+                        StyledText {
+                            visible: root.permission !== null && root.permission.plain !== ""
+                            text: root.permCommandShown ? "Hide command ▴" : "Show command ▾"
+                            font.pixelSize: root.fsSmall - 1
+                            color: Theme.onSurfaceVariant
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.permCommandShown = !root.permCommandShown
+                            }
+                        }
+                        StyledText {
+                            visible: root.permCommandShown && root.permission !== null && root.permission.plain !== ""
+                            width: parent.width
+                            text: root.permission ? root.permission.summary : ""
+                            wrapMode: Text.WrapAnywhere
+                            maximumLineCount: 6
+                            elide: Text.ElideRight
+                            font.family: "monospace"
+                            font.pixelSize: root.fsSmall - 1
+                            color: Theme.onSurfaceVariant
+                        }
+                        StyledText {
+                            visible: text !== ""
+                            width: parent.width
+                            text: root.permission ? root.permission.reason : ""
+                            wrapMode: Text.Wrap
+                            font.pixelSize: root.fsSmall - 1
+                            color: Theme.onSurfaceVariant
+                        }
+                        Row {
+                            anchors.right: parent.right
+                            spacing: 8
+                            Rectangle {
+                                width: denyText.implicitWidth + 28
+                                height: 30
+                                radius: 15
+                                color: denyMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.14) : Theme.withAlpha(Theme.onSurface, 0.07)
+                                StyledText {
+                                    id: denyText
+                                    anchors.centerIn: parent
+                                    text: "Deny"
+                                    font.pixelSize: root.fsSmall
+                                    color: Theme.onSurface
+                                }
+                                MouseArea {
+                                    id: denyMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.answerPermission(false)
+                                }
+                            }
+                            Rectangle {
+                                width: allowText.implicitWidth + 28
+                                height: 30
+                                radius: 15
+                                color: allowMouse.containsMouse ? Qt.lighter(root.accent, 1.1) : root.accent
+                                StyledText {
+                                    id: allowText
+                                    anchors.centerIn: parent
+                                    text: "Allow"
+                                    font.pixelSize: root.fsSmall
+                                    font.weight: Font.Medium
+                                    color: "white"
+                                }
+                                MouseArea {
+                                    id: allowMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.answerPermission(true)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // ---- attached screenshot ----
                 Rectangle {
                     visible: root.view === "chat" && root.pendingImage !== ""
@@ -1018,7 +1392,7 @@ PluginComponent {
                 Rectangle {
                     visible: root.view === "chat"
                     Layout.fillWidth: true
-                    Layout.preferredHeight: inputCol.implicitHeight + 16
+                    Layout.preferredHeight: inputCol.implicitHeight + 24   // 14 top + 10 bottom (= side margin)
                     radius: Theme.cornerRadius
                     color: Theme.withAlpha(Theme.onSurface, 0.06)
                     //border.width: input.activeFocus ? 1 : 0
@@ -1034,10 +1408,12 @@ PluginComponent {
                         ScrollView {
                             width: parent.width
                             height: Math.min(Math.max(input.implicitHeight, 24), 140)
+                            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                             TextArea {
                                 id: input
-                                placeholderText: root.pendingImage || root.pendingQuote ? "Ask about your selection…" : "Ask Claude…"
+                                placeholderText: root.pendingImage || root.pendingQuote ? "Ask about your selection…" : (root.agentMode ? "Ask Claude to do something on your PC…" : "Ask Claude…")
                                 placeholderTextColor: Theme.onSurfaceVariant
                                 color: Theme.onSurface
                                                                 cursorDelegate: Rectangle {
@@ -1068,6 +1444,9 @@ PluginComponent {
                                 background: null
                                 padding: 0
                                 selectByMouse: true
+                                wrapMode: TextArea.Wrap
+                                selectionColor: "#3584e4"
+                                selectedTextColor: "white"
 
                                 // Enter = send, Shift+Enter = new line
                                 Keys.onPressed: event => {
@@ -1082,7 +1461,7 @@ PluginComponent {
 
                         RowLayout {
                             width: parent.width
-                            spacing: 6
+                            spacing: 4
 
                             ChipMenu {
                                 icon: "neurology"
@@ -1096,11 +1475,41 @@ PluginComponent {
                                 current: root.effort
                                 onPicked: value => root.setEffort(value)
                             }
-                            DIcon {
-                                visible: root.allowWeb
-                                name: "travel_explore"
-                                size: 16
-                                color: Theme.onSurfaceVariant
+
+                            // Agent mode toggle: Claude may use your computer (asks first)
+                            Rectangle {
+                                Layout.preferredWidth: agentRow.implicitWidth + 16
+                                Layout.preferredHeight: 30
+                                radius: 15
+                                color: root.agentMode ? Theme.withAlpha(root.accent, 0.22) : (agentMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.12) : Theme.withAlpha(Theme.onSurface, 0.06))
+                                border.width: root.agentMode ? 1 : 0
+                                border.color: Theme.withAlpha(root.accent, 0.6)
+                                Row {
+                                    id: agentRow
+                                    anchors.centerIn: parent
+                                    spacing: 4
+                                    DIcon {
+                                        name: "smart_toy"
+                                        size: 14
+                                        filled: root.agentMode
+                                        color: root.agentMode ? root.accent : Theme.onSurfaceVariant
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                    StyledText {
+                                        text: "Agent"
+                                        font.pixelSize: Theme.fontSizeMedium
+                                        color: Theme.onSurface
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
+                                MouseArea {
+                                    id: agentMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: !root.busy
+                                    onClicked: root.agentMode = !root.agentMode
+                                }
                             }
                             Item {
                                 Layout.fillWidth: true
@@ -1111,7 +1520,7 @@ PluginComponent {
                                 visible: root.tokens !== null && root.tokens.total > 0
                                 text: !root.tokens ? "" : (tokenMouse.containsMouse && root.tokens.last
                                     ? root.fmtTokens(root.tokens.last.input) + " in (" + root.fmtTokens(root.tokens.last.cached) + " cached) · " + root.fmtTokens(root.tokens.last.output) + " out"
-                                    : root.fmtTokens(root.tokens.total) + " tokens")
+                                    : root.fmtTokens(root.tokens.total) + " tok")
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.withAlpha(Theme.onSurfaceVariant, 0.75)
                                 MouseArea {
