@@ -64,6 +64,13 @@ PluginSettings {
         defaultValue: false
     }
 
+    ToggleSetting {
+        settingKey: "screenViewer"
+        label: "Screen viewer"
+        description: "Claude may take a screenshot of your active window when you ask about something on screen that you didn't select. Also in the chat's quick settings (gear)."
+        defaultValue: true
+    }
+
     SelectionSetting {
         settingKey: "maxImageSide"
         label: "Screenshot size limit"
@@ -88,7 +95,7 @@ PluginSettings {
     ToggleSetting {
         settingKey: "includeWindow"
         label: "Include active window"
-        description: "Tells Claude which app and window title you were looking at (about 20 tokens), so \"this folder\" or \"this file\" works. Tip: in Dolphin turn on Configure → Interface → \"Show the full path inside the title bar\"."
+        description: "Quietly tells Claude which app and window title you were looking at (about 20 tokens), so \"this folder\" or \"this file\" works. Tip: in Dolphin turn on Configure → Interface → \"Show the full path inside the title bar\"."
         defaultValue: true
     }
 

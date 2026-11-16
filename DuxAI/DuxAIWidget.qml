@@ -177,6 +177,76 @@ PluginComponent {
         }
     }
 
+    // A row with icon, label, hint and an on/off switch (quick settings).
+    component SwitchRow: Rectangle {
+        id: sw
+        property string icon: ""
+        property string label: ""
+        property string hint: ""
+        property bool checked: false
+        signal toggled
+
+        implicitHeight: 52
+        radius: Theme.cornerRadius
+        color: swMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.06) : "transparent"
+
+        DIcon {
+            id: swIcon
+            x: 10
+            anchors.verticalCenter: parent.verticalCenter
+            name: sw.icon
+            size: 18
+            color: sw.checked ? root.accent : Theme.onSurfaceVariant
+        }
+        Column {
+            anchors.left: swIcon.right
+            anchors.leftMargin: 10
+            anchors.right: track.left
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            StyledText {
+                text: sw.label
+                font.pixelSize: Theme.fontSizeMedium
+                color: Theme.onSurface
+            }
+            StyledText {
+                width: parent.width
+                text: sw.hint
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.onSurfaceVariant
+            }
+        }
+        Rectangle {
+            id: track
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            anchors.verticalCenter: parent.verticalCenter
+            width: 36
+            height: 20
+            radius: 10
+            color: sw.checked ? root.accent : Theme.withAlpha(Theme.onSurface, 0.2)
+            Rectangle {
+                width: 14
+                height: 14
+                radius: 7
+                anchors.verticalCenter: parent.verticalCenter
+                x: sw.checked ? parent.width - width - 3 : 3
+                color: "white"
+                Behavior on x {
+                    NumberAnimation { duration: 120 }
+                }
+            }
+        }
+        MouseArea {
+            id: swMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sw.toggled()
+        }
+    }
+
     // Round colored circle with the logo inside (bar, chat header, empty
     // screen). Shows a white copy of assets/logo.svg if it exists, otherwise
     // a sparkle icon. (Inline component: no extra file for QML to find.)
@@ -224,7 +294,17 @@ PluginComponent {
     property string effortOverride: ""
     readonly property string model: modelOverride || pluginData.model || "sonnet"
     readonly property string effort: effortOverride || pluginData.effort || "medium"
-    readonly property bool allowWeb: pluginData.allowWeb ?? false
+    // Quick settings (gear in the chat header); also in the plugin settings page.
+    property bool allowWeb: pluginData.allowWeb ?? false
+    property bool screenViewer: pluginData.screenViewer ?? true   // Claude may look at the screen when needed
+
+    function setQuick(key, value) {
+        if (key === "allowWeb")
+            allowWeb = value;
+        else if (key === "screenViewer")
+            screenViewer = value;
+        pluginService?.savePluginData("duxAi", key, value);
+    }
     readonly property int maxImageSide: parseInt(pluginData.maxImageSide || "1280")
     readonly property string extraInstructions: pluginData.extraInstructions || ""
     readonly property bool includeWindow: pluginData.includeWindow ?? true
@@ -267,11 +347,11 @@ PluginComponent {
     property var historyItems: []
     property string storageText: ""
     property bool confirmDeleteAll: false
+    property bool quickSettingsOpen: false
     property bool agentMode: pluginData.agentDefault ?? false
     property var permission: null       // { id, summary, reason } while Claude waits for Allow/Deny
     property string windowApp: ""       // active window when the chat was opened
     property string windowTitle: ""
-    property bool windowOn: true        // ✕ on the window chip turns it off
     readonly property string windowText: windowApp ? windowApp + (windowTitle ? " — " + windowTitle : "") : ""
     property var tokens: null           // { total, context, last: { input, cached, output } }
 
@@ -320,8 +400,6 @@ PluginComponent {
         if (lastToplevel && (lastToplevel.appId || lastToplevel.title)) {
             const app = prettyApp(lastToplevel.appId);
             const title = lastToplevel.title || "";
-            if (app !== windowApp || title !== windowTitle)
-                windowOn = true;
             windowApp = app;
             windowTitle = title;
             return;
@@ -331,8 +409,6 @@ PluginComponent {
             const ev = lastJson(out);
             if (ev?.type !== "window")
                 return;
-            if (ev.app !== windowApp || ev.title !== windowTitle)
-                windowOn = true;   // new window -> show the chip again
             windowApp = ev.app;
             windowTitle = ev.title;
         });
@@ -367,26 +443,16 @@ PluginComponent {
     }
 
     // ------------------------------------------------------------- capture --
-    property bool captureWholeWindow: false
-
     function startCapture() {
         fetchWindow();
-        captureWholeWindow = false;
         root.closePopout();          // get the window out of the way first
-        captureTimer.restart();
-    }
-
-    // Screenshot of the whole active window (camera button on the window chip).
-    function captureWindow() {
-        captureWholeWindow = true;
-        root.closePopout();
         captureTimer.restart();
     }
 
     Timer {
         id: captureTimer
         interval: 300                // let the popout finish closing
-        onTriggered: Proc.runCommand("duxAi.capture", ["python3", root.backend, "capture"].concat(root.captureWholeWindow ? ["--window"] : []), (out, code) => {
+        onTriggered: Proc.runCommand("duxAi.capture", ["python3", root.backend, "capture"], (out, code) => {
             const ev = root.lastJson(out);
             if (ev?.type === "captured") {
                 root.pendingImage = ev.path;
@@ -424,7 +490,7 @@ PluginComponent {
         if (busy || (!text && !pendingImage && !pendingQuote))
             return false;
 
-        const win = includeWindow && windowOn ? windowText : "";
+        const win = includeWindow ? windowText : "";   // sent along invisibly
         messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, window: win, steps: "", isError: false });
         messages.append({ role: "assistant", text: "", image: "", quote: "", window: "", steps: "", isError: false });
         if (!chatId)
@@ -440,6 +506,8 @@ PluginComponent {
             cmd.push("--quote=" + pendingQuote);
         if (allowWeb)
             cmd.push("--web");
+        if (screenViewer)
+            cmd.push("--screen");
         if (extraInstructions)
             cmd.push("--extra=" + extraInstructions);
         if (win)
@@ -702,6 +770,45 @@ PluginComponent {
                 z: 100
             }
 
+            // ---- quick settings panel (gear button) ----
+            Rectangle {
+                visible: root.quickSettingsOpen
+                z: 200
+                anchors.right: parent.right
+                y: 40
+                width: 280
+                height: quickCol.implicitHeight + 16
+                radius: Theme.cornerRadius
+                color: Theme.surfaceContainerHigh
+                border.width: 1
+                border.color: Theme.outlineVariant
+
+                Column {
+                    id: quickCol
+                    x: 8
+                    y: 8
+                    width: parent.width - 16
+                    spacing: 2
+
+                    SwitchRow {
+                        width: parent.width
+                        icon: "travel_explore"
+                        label: "Web search"
+                        hint: "Claude may search the internet"
+                        checked: root.allowWeb
+                        onToggled: root.setQuick("allowWeb", !root.allowWeb)
+                    }
+                    SwitchRow {
+                        width: parent.width
+                        icon: "visibility"
+                        label: "Screen viewer"
+                        hint: "Claude may look at your screen when you ask about it"
+                        checked: root.screenViewer
+                        onToggled: root.setQuick("screenViewer", !root.screenViewer)
+                    }
+                }
+            }
+
             ColumnLayout {
                 anchors.fill: parent
                 spacing: Theme.spacingS
@@ -741,6 +848,11 @@ PluginComponent {
                         icon: "edit_square"
                         enabled: !root.busy
                         onClicked: root.newChat()
+                    }
+                    IconBtn {
+                        icon: "tune"
+                        active: root.quickSettingsOpen
+                        onClicked: root.quickSettingsOpen = !root.quickSettingsOpen
                     }
                     IconBtn {
                         icon: "history"
@@ -858,27 +970,6 @@ PluginComponent {
                                             hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: Qt.openUrlExternally("file://" + msg.image)
-                                        }
-                                    }
-
-                                    // Which window the question was asked from
-                                    Row {
-                                        visible: msg.isUser && msg.window !== ""
-                                        width: content.width
-                                        spacing: 6
-                                        DIcon {
-                                            name: "select_window"
-                                            size: 14
-                                            color: Theme.onSurfaceVariant
-                                            anchors.verticalCenter: parent.verticalCenter
-                                        }
-                                        StyledText {
-                                            width: parent.width - 20
-                                            text: msg.window
-                                            elide: Text.ElideMiddle
-                                            font.pixelSize: root.fsSmall - 1
-                                            color: Theme.onSurfaceVariant
-                                            anchors.verticalCenter: parent.verticalCenter
                                         }
                                     }
 
@@ -1196,55 +1287,6 @@ PluginComponent {
                     }
                 }
 
-                // ---- active window chip ----
-                Rectangle {
-                    visible: root.view === "chat" && root.includeWindow && root.windowOn && root.windowText !== "" && root.permission === null
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 32
-                    radius: Theme.cornerRadius
-                    color: Theme.withAlpha(Theme.onSurface, 0.05)
-
-                    DIcon {
-                        id: winIcon
-                        x: 10
-                        anchors.verticalCenter: parent.verticalCenter
-                        name: "select_window"
-                        size: 16
-                        color: Theme.onSurfaceVariant
-                    }
-                    StyledText {
-                        anchors.left: winIcon.right
-                        anchors.leftMargin: 8
-                        anchors.right: winShot.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: root.windowText
-                        elide: Text.ElideMiddle
-                        font.pixelSize: root.fsSmall
-                        color: Theme.onSurfaceVariant
-                    }
-                    IconBtn {
-                        id: winShot
-                        anchors.right: winClose.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: 28
-                        implicitHeight: 28
-                        iconSize: 16
-                        icon: "photo_camera"
-                        onClicked: root.captureWindow()
-                    }
-                    IconBtn {
-                        id: winClose
-                        anchors.right: parent.right
-                        anchors.rightMargin: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: 28
-                        implicitHeight: 28
-                        iconSize: 16
-                        icon: "close"
-                        onClicked: root.windowOn = false
-                    }
-                }
-
                 // ---- attached screenshot ----
                 Rectangle {
                     visible: root.view === "chat" && root.pendingImage !== ""
@@ -1438,12 +1480,6 @@ PluginComponent {
                                     enabled: !root.busy
                                     onClicked: root.agentMode = !root.agentMode
                                 }
-                            }
-                            DIcon {
-                                visible: root.allowWeb
-                                name: "travel_explore"
-                                size: 16
-                                color: Theme.onSurfaceVariant
                             }
                             Item {
                                 Layout.fillWidth: true

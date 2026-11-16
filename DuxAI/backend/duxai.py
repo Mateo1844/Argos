@@ -59,12 +59,17 @@ AGENT_PROMPT = (
     "replies short. A message may start with [Active window: app - title]: "
     "'this folder/file/page' usually refers to that window (e.g. a Dolphin title "
     "is the folder path). Every change you make is shown to the user for "
-    "approval; if they deny something, don't try to work around it. "
-    "To SEE the user's screen, run `{screen_cmd}` (the active window) or "
-    "`{screen_cmd} --full` (whole monitor); it prints a PNG path: Read that "
-    "file to look at it. Do this when the user refers to something on screen "
-    "and you can't tell from the window title alone."
+    "approval; if they deny something, don't try to work around it."
 )
+
+# Added when the screen viewer is on (both modes).
+SCREEN_PROMPT = (
+    "You can look at the user's screen with the view_screen tool (active window, "
+    "or full=true for the whole monitor). Use it only when the user refers to "
+    "something on their screen that they didn't attach and the window title "
+    "isn't enough. Don't mention the tool, just answer."
+)
+SCREEN_TOOL = "mcp__duxai__view_screen"
 
 # Always blocked in agent mode, whatever the user clicks.
 ALWAYS_DENY = ["Bash(sudo *)", "Bash(rm -rf *)", "Bash(rm -fr *)",
@@ -243,8 +248,25 @@ def supported_flags(claude):
     return set(flags)
 
 
-def build_command(claude, flags, model, effort, session_id, web, extra_prompt):
-    system = SYSTEM_PROMPT + ("\n\n" + extra_prompt.strip() if extra_prompt.strip() else "")
+def mcp_config():
+    """Our own tiny tool server (this script with `mcp`): gives Claude view_screen."""
+    return json.dumps({"mcpServers": {"duxai": {
+        "type": "stdio", "command": sys.executable, "args": [str(Path(__file__).resolve()), "mcp"]}}})
+
+
+def lean_env(screen):
+    """Environment for normal chat. --safe-mode would also block our own tool
+    server, so with the screen viewer on we keep CLAUDE.md/memory out this way."""
+    env = dict(os.environ)
+    if screen:
+        env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
+        env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    return env
+
+
+def build_command(claude, flags, model, effort, session_id, web, extra_prompt, screen=False):
+    system = SYSTEM_PROMPT + ("\n\n" + SCREEN_PROMPT if screen else "")
+    system += ("\n\n" + extra_prompt.strip() if extra_prompt.strip() else "")
     cmd = [
         claude, "-p",
         "--input-format", "stream-json",      # lets us send images as content blocks
@@ -259,9 +281,12 @@ def build_command(claude, flags, model, effort, session_id, web, extra_prompt):
         # No tools = no tool definitions in the prompt (saves tokens).
         # With web search on, only the two web tools are offered.
         cmd += ["--tools", "WebSearch,WebFetch" if web else ""]
-    if web:
-        cmd += ["--allowedTools", "WebSearch,WebFetch"]
-    cmd += [f for f in LEAN_FLAGS if f in flags]
+    allowed = (["WebSearch", "WebFetch"] if web else []) + ([SCREEN_TOOL] if screen else [])
+    if allowed:
+        cmd += ["--allowedTools", ",".join(allowed)]
+    if screen:
+        cmd += ["--mcp-config", mcp_config()]
+    cmd += [f for f in LEAN_FLAGS if f in flags and not (screen and f == "--safe-mode")]
     if session_id:
         cmd += ["--resume", session_id]
     return cmd
@@ -284,7 +309,7 @@ def split_folders(text):
     return [f for f in (x.strip() for x in (text or "").split(",")) if f]
 
 
-def permission_rules(level, trusted, ask_dirs, deny_dirs):
+def permission_rules(level, trusted, ask_dirs, deny_dirs, screen=False):
     """Build the allow/ask/deny rules for agent mode.
 
     deny  > ask > allow: a denied folder stays denied even if allowed elsewhere.
@@ -301,31 +326,15 @@ def permission_rules(level, trusted, ask_dirs, deny_dirs):
         ask += ["Read", "Glob", "Grep", "Bash", "Edit", "WebFetch", "WebSearch"]
     elif level == "trusted":
         allow += [f"Edit({rule_path(d)}/**)" for d in split_folders(trusted)]
-    if level != "ask_all":
-        allow += agent_allow_rules()
+    if screen and level != "ask_all":
+        allow.append(SCREEN_TOOL)        # looking at the screen doesn't change anything
     return {"allow": allow, "ask": ask, "deny": deny}
 
 
-def screen_command():
-    """The command the agent runs to take a screenshot (pre-approved)."""
-    return f"python3 {Path(__file__).resolve()} screen"
-
-
-def agent_allow_rules():
-    """Read-only things the agent may do without asking: look at the screen
-    (our own screenshot command + reading its images) and query niri."""
-    shots = str(IMAGES_DIR / "agent")
-    return [f"Bash({screen_command()})", f"Bash({screen_command()} --full)",
-            f"Read(/{shots}/**)",
-            "Bash(niri msg focused-window)", "Bash(niri msg --json focused-window)",
-            "Bash(niri msg windows)", "Bash(niri msg --json windows)",
-            "Bash(niri msg focused-output)", "Bash(niri msg --json focused-output)"]
-
-
-def build_agent_command(claude, flags, model, effort, session_id, extra_prompt, rules):
+def build_agent_command(claude, flags, model, effort, session_id, extra_prompt, rules, screen=False):
     """Agent mode: Claude Code with its normal tools, your settings and MCP
     servers, and every permission question sent to us (shown as buttons)."""
-    system = AGENT_PROMPT.replace("{screen_cmd}", screen_command())
+    system = AGENT_PROMPT + ("\n\n" + SCREEN_PROMPT if screen else "")
     system += ("\n\n" + extra_prompt.strip() if extra_prompt.strip() else "")
     cmd = [
         claude, "-p",
@@ -341,6 +350,8 @@ def build_agent_command(claude, flags, model, effort, session_id, extra_prompt, 
     ]
     if "--effort" in flags and effort:
         cmd += ["--effort", effort]
+    if screen:
+        cmd += ["--mcp-config", mcp_config()]
     if session_id:
         cmd += ["--resume", session_id]
     return cmd
@@ -447,14 +458,16 @@ def cmd_ask(args):
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     flags = supported_flags(claude)
     if args.agent:
-        rules = permission_rules(args.perm, args.trusted, args.ask_dirs, args.deny_dirs)
-        cmd = build_agent_command(claude, flags, args.model, args.effort, session_id, args.extra, rules)
-        cwd = Path.home()   # so "~/Downloads" etc. are inside its working folder
+        rules = permission_rules(args.perm, args.trusted, args.ask_dirs, args.deny_dirs, args.screen)
+        cmd = build_agent_command(claude, flags, args.model, args.effort, session_id, args.extra, rules,
+                                  args.screen)
+        cwd, env = Path.home(), None   # so "~/Downloads" etc. are inside its working folder
     else:
-        cmd = build_command(claude, flags, args.model, args.effort, session_id, args.web, args.extra)
-        cwd = WORK_DIR
+        cmd = build_command(claude, flags, args.model, args.effort, session_id, args.web, args.extra,
+                            args.screen)
+        cwd, env = WORK_DIR, lean_env(args.screen)
     errfile = tempfile.TemporaryFile(mode="w+")
-    proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=errfile, text=True, bufsize=1)
     write_lock = threading.Lock()
 
@@ -523,14 +536,19 @@ def cmd_ask(args):
                 elif e.get("type") == "content_block_start":
                     block = e.get("content_block", {})
                     if block.get("type") in ("tool_use", "server_tool_use"):
-                        emit(type="status", text="Searching the web…")
+                        name = block.get("name", "")
+                        emit(type="status", text="Looking at your screen…" if name == SCREEN_TOOL
+                             else "Searching the web…" if name.startswith("Web") or block.get("type") == "server_tool_use"
+                             else "Working…")
                     elif block.get("type") == "text":
                         thinking_sent = False
                         emit(type="status", text="")
             elif kind == "assistant" and not ev.get("parent_tool_use_id"):
                 # Log what Claude does ("Read ~/x", "Run: ls") as small steps.
                 for block in ev.get("message", {}).get("content", []):
-                    if block.get("type") == "tool_use":
+                    if block.get("type") == "tool_use" and block.get("name") == SCREEN_TOOL:
+                        emit(type="status", text="Looking at your screen…")   # not logged as a step
+                    elif block.get("type") == "tool_use":
                         step = describe_tool(block.get("name"), block.get("input"))
                         steps.append(step)
                         emit(type="step", text=step)
@@ -655,10 +673,10 @@ def active_window():
     return app, title.strip()
 
 
-def cmd_screen(args):
-    """Screenshot for the agent: active window (default) or whole monitor.
+def take_screenshot(full=False):
+    """Screenshot of the active window (or whole monitor). Returns a Path or None.
 
-    Keeps only the last 10 agent screenshots.
+    Keeps only the last 10 of these in images/agent.
     """
     folder = IMAGES_DIR / "agent"
     folder.mkdir(parents=True, exist_ok=True)
@@ -666,9 +684,9 @@ def cmd_screen(args):
         old.unlink(missing_ok=True)
     path = folder / time.strftime("screen-%Y%m%d-%H%M%S.png")
     if shutil.which("dms"):
-        mode = "full" if args.full else "window"
-        out = subprocess.run(["dms", "screenshot", mode, "--no-clipboard", "--no-notify", "--json",
-                              "-d", str(folder), "--filename", path.name], capture_output=True, text=True)
+        out = subprocess.run(["dms", "screenshot", "full" if full else "window", "--no-clipboard",
+                              "--no-notify", "--json", "-d", str(folder), "--filename", path.name],
+                             capture_output=True, text=True)
         for line in out.stdout.splitlines():
             try:
                 meta = json.loads(line)
@@ -678,11 +696,51 @@ def cmd_screen(args):
                 path = Path(meta["path"])
     elif shutil.which("grim"):
         subprocess.run(["grim", str(path)])
-    if path.is_file() and path.stat().st_size > 0:
-        print(path)       # plain path: this command is run by Claude, not by QML
-        return 0
-    print("Screenshot failed (need dms or grim).")
-    return 1
+    return path if path.is_file() and path.stat().st_size > 0 else None
+
+
+def cmd_mcp(_args):
+    """Minimal MCP server (JSON-RPC over stdin/stdout) with one tool: view_screen.
+
+    Claude Code starts this itself (see mcp_config). The screenshot goes back
+    to Claude as an image, so the user never sees a command for it.
+    """
+    tool = {
+        "name": "view_screen",
+        "description": "Take a screenshot of the user's active window (or the whole monitor with "
+                       "full=true) and look at it.",
+        "inputSchema": {"type": "object", "properties": {
+            "full": {"type": "boolean", "description": "Whole monitor instead of the active window"}}},
+    }
+    for line in sys.stdin:
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if "id" not in msg:
+            continue   # notifications need no answer
+        method, result = msg.get("method"), None
+        if method == "initialize":
+            result = {"protocolVersion": msg.get("params", {}).get("protocolVersion", "2025-06-18"),
+                      "capabilities": {"tools": {}}, "serverInfo": {"name": "duxai", "version": "0.1"}}
+        elif method == "tools/list":
+            result = {"tools": [tool]}
+        elif method == "tools/call":
+            full = bool(msg.get("params", {}).get("arguments", {}).get("full"))
+            shot = take_screenshot(full)
+            if shot:
+                media, b64 = prepare_image(str(shot), 1280)
+                result = {"content": [{"type": "image", "data": b64, "mimeType": media}]}
+            else:
+                result = {"content": [{"type": "text", "text": "Screenshot failed."}], "isError": True}
+        elif method == "ping":
+            result = {}
+        if result is None:
+            reply = {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "Unknown method"}}
+        else:
+            reply = {"jsonrpc": "2.0", "id": msg["id"], "result": result}
+        print(json.dumps(reply), flush=True)
+    return 0
 
 
 def cmd_window(_args):
@@ -773,6 +831,7 @@ def main(argv=None):
     ask.add_argument("--quote", default="", help="selected text to ask about")
     ask.add_argument("--window", default="", help='active window, e.g. "Dolphin - ~/Downloads"')
     ask.add_argument("--agent", action="store_true", help="let Claude use your computer (asks first)")
+    ask.add_argument("--screen", action="store_true", help="let Claude look at your screen when needed")
     ask.add_argument("--perm", default="ask_changes", choices=["ask_all", "ask_changes", "trusted"])
     ask.add_argument("--trusted", default="", help="agent: comma-separated folders it may edit freely")
     ask.add_argument("--ask-dirs", default="", help="agent: folders where edits always ask")
@@ -794,9 +853,7 @@ def main(argv=None):
     capture.add_argument("--window", action="store_true", help="screenshot the focused window")
     capture.set_defaults(func=cmd_capture)
     sub.add_parser("window").set_defaults(func=cmd_window)
-    screen = sub.add_parser("screen", help="screenshot for agent mode; prints the file path")
-    screen.add_argument("--full", action="store_true", help="whole monitor instead of the active window")
-    screen.set_defaults(func=cmd_screen)
+    sub.add_parser("mcp", help="tool server Claude Code starts for view_screen").set_defaults(func=cmd_mcp)
     sub.add_parser("selection").set_defaults(func=cmd_selection)
     sub.add_parser("logo").set_defaults(func=cmd_logo)
 

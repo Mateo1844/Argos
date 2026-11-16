@@ -43,10 +43,8 @@ settings, permissions and MCP servers). Its prompt runs in your home folder.
   folders*. The order of precedence is deny > ask > allow.
 - **Always blocked:** `sudo`, `rm -rf`, `~/.ssh` and `~/.gnupg`, whatever you
   click.
-- **Seeing your screen:** the agent can take a screenshot of your active
-  window, or the whole monitor, whenever you refer to something on screen. It
-  can also ask niri which windows are open. Both are allowed without asking,
-  except at the *Ask for everything* level.
+- **Seeing your screen:** with the screen viewer on, the agent can look at
+  your screen without asking (except at the *Ask for everything* level).
 - **Cost:** it uses more tokens than the normal chat, because Claude Code's
   tools and instructions are sent along. Normal chat stays lean.
 
@@ -54,20 +52,19 @@ The folder rules cover Claude's file tools. A shell command could still touch
 a file, so every command that changes something asks first and shows the full
 command. Keep backups of important work anyway.
 
-## Active window
+## Active window and screen viewer
 
-When you open the chat, DUX-AI checks which window you were looking at (via
-`niri msg` or `hyprctl`). It shows that as a chip above the input, for example
-`Dolphin — ~/Documents/KUL/Thermo`, and sends it along, which costs about 20
-tokens. So "rename the files in this folder" or "explain this file" just
-works.
-
-- ✕ leaves the window out of your next messages.
-- The camera button attaches a screenshot of that whole window.
-- In Dolphin, turn on *Configure Dolphin → Interface → Show the full path
-  inside the title bar*, so the title contains the full path.
-- To turn the window chip off completely, use the *Include active window*
-  setting.
+- **Active window:** DUX-AI quietly sends along which app and window title you
+  were looking at (about 20 tokens). That's how "rename the files in this
+  folder" or "explain this file" works. In Dolphin, turn on *Configure Dolphin →
+  Interface → Show the full path inside the title bar* to send the full path.
+- **Screen viewer:** when you ask about something on screen that you didn't
+  select, Claude can take a screenshot of your active window by itself and
+  look at it. This works in normal chat and in agent mode. It happens through
+  a small built-in tool, so no command or Allow/Deny card shows up. The
+  chat only says "Looking at your screen…" while it happens.
+- **Gear button in the chat:** quick switches for *Web search* and *Screen
+  viewer*. The same options are in the plugin settings.
 
 ## Install (Fedora + niri + DMS)
 

@@ -160,8 +160,6 @@ class BackendTest(unittest.TestCase):
         self.assertIn("Bash(sudo *)", rules["deny"])
         text = call["message"]["message"]["content"][0]["text"]
         self.assertTrue(text.startswith("[Active window: Dolphin - ~/Downloads]"))
-        prompt = argv[argv.index("--append-system-prompt") + 1]
-        self.assertIn("duxai.py screen", prompt)                       # agent knows how to see the screen
         reply = json.loads(self.log.read_text().splitlines()[-1])["reply"]
         self.assertEqual(reply["response"]["request_id"], "req-1")
         self.assertEqual(reply["response"]["response"]["updatedInput"], {"command": "ls ~/Downloads"})
@@ -179,12 +177,30 @@ class BackendTest(unittest.TestCase):
         self.assertIn("Edit(~/Documents/KUL/**)", r["ask"])
         self.assertIn("Read(~/Secret/**)", r["deny"])
         self.assertIn("Bash", duxai.permission_rules("ask_all", "", "", "")["ask"])
-        allow = duxai.permission_rules("ask_changes", "~/x", "", "")["allow"]
+        allow = duxai.permission_rules("ask_changes", "~/x", "", "", True)["allow"]
         self.assertFalse(any(r.startswith("Edit(") for r in allow))       # trusted folders only in "trusted"
-        self.assertIn(f"Bash({duxai.screen_command()})", allow)           # agent may look at the screen
-        self.assertIn("Bash(niri msg --json focused-window)", allow)
-        self.assertNotIn(f"Bash({duxai.screen_command()})",
-                         duxai.permission_rules("ask_all", "", "", "")["allow"])
+        self.assertIn(duxai.SCREEN_TOOL, allow)                           # looking at the screen is free
+        self.assertNotIn(duxai.SCREEN_TOOL, duxai.permission_rules("ask_all", "", "", "", True)["allow"])
+
+    def test_screen_viewer_flags(self):
+        self.run_backend("ask", "--screen", "--", "what's on my screen?")
+        self.run_backend("ask", "--", "hi")
+        with_screen, without = self.calls()[0]["argv"], self.calls()[1]["argv"]
+        self.assertIn("--mcp-config", with_screen)
+        self.assertNotIn("--safe-mode", with_screen)        # safe mode would block our tool server
+        self.assertIn("mcp__duxai__view_screen", with_screen[with_screen.index("--allowedTools") + 1])
+        self.assertNotIn("--mcp-config", without)
+        self.assertIn("--safe-mode", without)
+
+    def test_mcp_server_lists_view_screen(self):
+        msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}]
+        out = subprocess.run([sys.executable, str(BACKEND), "mcp"], input="".join(json.dumps(m) + "\n" for m in msgs),
+                             capture_output=True, text=True, env=self.env, timeout=30).stdout
+        replies = [json.loads(l) for l in out.splitlines()]
+        self.assertEqual([r["id"] for r in replies], [1, 2])
+        self.assertEqual(replies[1]["result"]["tools"][0]["name"], "view_screen")
 
     def test_missing_claude(self):
         env = dict(self.env, PATH="/usr/bin:/bin")
