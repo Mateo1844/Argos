@@ -8,6 +8,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Common
 import qs.Services
 import qs.DCommon.Widgets
@@ -298,9 +299,34 @@ PluginComponent {
 
     // ------------------------------------------------------- active window --
     // Which app/window you were looking at, so "this folder" etc. makes sense.
+    // We remember the last real window continuously: once the chat is open it
+    // has keyboard focus itself, so asking the compositor *then* returns nothing.
+    property var lastToplevel: null
+    readonly property Toplevel activeToplevel: ToplevelManager.activeToplevel
+    onActiveToplevelChanged: {
+        if (activeToplevel && (activeToplevel.appId || activeToplevel.title))
+            lastToplevel = activeToplevel;
+    }
+
+    function prettyApp(appId) {
+        // "org.kde.dolphin" -> "Dolphin"
+        const last = (appId || "").split(".").pop().replace(/-/g, " ").trim();
+        return last ? last.charAt(0).toUpperCase() + last.slice(1) : "";
+    }
+
     function fetchWindow() {
         if (!includeWindow || busy)
             return;
+        if (lastToplevel && (lastToplevel.appId || lastToplevel.title)) {
+            const app = prettyApp(lastToplevel.appId);
+            const title = lastToplevel.title || "";
+            if (app !== windowApp || title !== windowTitle)
+                windowOn = true;
+            windowApp = app;
+            windowTitle = title;
+            return;
+        }
+        // Fallback: ask the compositor (niri / Hyprland) via the backend.
         Proc.runCommand("duxAi.window", ["python3", backend, "window"], out => {
             const ev = lastJson(out);
             if (ev?.type !== "window")
@@ -597,6 +623,8 @@ PluginComponent {
     readonly property bool hasLogo: logoPath !== ""
 
     Component.onCompleted: {
+        if (activeToplevel && (activeToplevel.appId || activeToplevel.title))
+            lastToplevel = activeToplevel;
         refreshHistory();
         Proc.runCommand("duxAi.logo", ["python3", backend, "logo"], out => {
             const ev = lastJson(out);

@@ -160,6 +160,8 @@ class BackendTest(unittest.TestCase):
         self.assertIn("Bash(sudo *)", rules["deny"])
         text = call["message"]["message"]["content"][0]["text"]
         self.assertTrue(text.startswith("[Active window: Dolphin - ~/Downloads]"))
+        prompt = argv[argv.index("--append-system-prompt") + 1]
+        self.assertIn("duxai.py screen", prompt)                       # agent knows how to see the screen
         reply = json.loads(self.log.read_text().splitlines()[-1])["reply"]
         self.assertEqual(reply["response"]["request_id"], "req-1")
         self.assertEqual(reply["response"]["response"]["updatedInput"], {"command": "ls ~/Downloads"})
@@ -177,7 +179,12 @@ class BackendTest(unittest.TestCase):
         self.assertIn("Edit(~/Documents/KUL/**)", r["ask"])
         self.assertIn("Read(~/Secret/**)", r["deny"])
         self.assertIn("Bash", duxai.permission_rules("ask_all", "", "", "")["ask"])
-        self.assertEqual(duxai.permission_rules("ask_changes", "~/x", "", "")["allow"], [])
+        allow = duxai.permission_rules("ask_changes", "~/x", "", "")["allow"]
+        self.assertFalse(any(r.startswith("Edit(") for r in allow))       # trusted folders only in "trusted"
+        self.assertIn(f"Bash({duxai.screen_command()})", allow)           # agent may look at the screen
+        self.assertIn("Bash(niri msg --json focused-window)", allow)
+        self.assertNotIn(f"Bash({duxai.screen_command()})",
+                         duxai.permission_rules("ask_all", "", "", "")["allow"])
 
     def test_missing_claude(self):
         env = dict(self.env, PATH="/usr/bin:/bin")

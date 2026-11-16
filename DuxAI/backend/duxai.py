@@ -59,7 +59,11 @@ AGENT_PROMPT = (
     "replies short. A message may start with [Active window: app - title]: "
     "'this folder/file/page' usually refers to that window (e.g. a Dolphin title "
     "is the folder path). Every change you make is shown to the user for "
-    "approval; if they deny something, don't try to work around it."
+    "approval; if they deny something, don't try to work around it. "
+    "To SEE the user's screen, run `{screen_cmd}` (the active window) or "
+    "`{screen_cmd} --full` (whole monitor); it prints a PNG path: Read that "
+    "file to look at it. Do this when the user refers to something on screen "
+    "and you can't tell from the window title alone."
 )
 
 # Always blocked in agent mode, whatever the user clicks.
@@ -297,13 +301,32 @@ def permission_rules(level, trusted, ask_dirs, deny_dirs):
         ask += ["Read", "Glob", "Grep", "Bash", "Edit", "WebFetch", "WebSearch"]
     elif level == "trusted":
         allow += [f"Edit({rule_path(d)}/**)" for d in split_folders(trusted)]
+    if level != "ask_all":
+        allow += agent_allow_rules()
     return {"allow": allow, "ask": ask, "deny": deny}
+
+
+def screen_command():
+    """The command the agent runs to take a screenshot (pre-approved)."""
+    return f"python3 {Path(__file__).resolve()} screen"
+
+
+def agent_allow_rules():
+    """Read-only things the agent may do without asking: look at the screen
+    (our own screenshot command + reading its images) and query niri."""
+    shots = str(IMAGES_DIR / "agent")
+    return [f"Bash({screen_command()})", f"Bash({screen_command()} --full)",
+            f"Read(/{shots}/**)",
+            "Bash(niri msg focused-window)", "Bash(niri msg --json focused-window)",
+            "Bash(niri msg windows)", "Bash(niri msg --json windows)",
+            "Bash(niri msg focused-output)", "Bash(niri msg --json focused-output)"]
 
 
 def build_agent_command(claude, flags, model, effort, session_id, extra_prompt, rules):
     """Agent mode: Claude Code with its normal tools, your settings and MCP
     servers, and every permission question sent to us (shown as buttons)."""
-    system = AGENT_PROMPT + ("\n\n" + extra_prompt.strip() if extra_prompt.strip() else "")
+    system = AGENT_PROMPT.replace("{screen_cmd}", screen_command())
+    system += ("\n\n" + extra_prompt.strip() if extra_prompt.strip() else "")
     cmd = [
         claude, "-p",
         "--input-format", "stream-json",
@@ -632,6 +655,36 @@ def active_window():
     return app, title.strip()
 
 
+def cmd_screen(args):
+    """Screenshot for the agent: active window (default) or whole monitor.
+
+    Keeps only the last 10 agent screenshots.
+    """
+    folder = IMAGES_DIR / "agent"
+    folder.mkdir(parents=True, exist_ok=True)
+    for old in sorted(folder.glob("*.png"))[:-9]:
+        old.unlink(missing_ok=True)
+    path = folder / time.strftime("screen-%Y%m%d-%H%M%S.png")
+    if shutil.which("dms"):
+        mode = "full" if args.full else "window"
+        out = subprocess.run(["dms", "screenshot", mode, "--no-clipboard", "--no-notify", "--json",
+                              "-d", str(folder), "--filename", path.name], capture_output=True, text=True)
+        for line in out.stdout.splitlines():
+            try:
+                meta = json.loads(line)
+            except ValueError:
+                continue
+            if meta.get("path"):
+                path = Path(meta["path"])
+    elif shutil.which("grim"):
+        subprocess.run(["grim", str(path)])
+    if path.is_file() and path.stat().st_size > 0:
+        print(path)       # plain path: this command is run by Claude, not by QML
+        return 0
+    print("Screenshot failed (need dms or grim).")
+    return 1
+
+
 def cmd_window(_args):
     app, title = active_window()
     emit(type="window", app=app, title=title)
@@ -741,6 +794,9 @@ def main(argv=None):
     capture.add_argument("--window", action="store_true", help="screenshot the focused window")
     capture.set_defaults(func=cmd_capture)
     sub.add_parser("window").set_defaults(func=cmd_window)
+    screen = sub.add_parser("screen", help="screenshot for agent mode; prints the file path")
+    screen.add_argument("--full", action="store_true", help="whole monitor instead of the active window")
+    screen.set_defaults(func=cmd_screen)
     sub.add_parser("selection").set_defaults(func=cmd_selection)
     sub.add_parser("logo").set_defaults(func=cmd_logo)
 

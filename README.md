@@ -43,6 +43,10 @@ settings, permissions and MCP servers). Its prompt runs in your home folder.
   folders*. The order of precedence is deny > ask > allow.
 - **Always blocked:** `sudo`, `rm -rf`, `~/.ssh` and `~/.gnupg`, whatever you
   click.
+- **Seeing your screen:** the agent can take a screenshot of your active
+  window, or the whole monitor, whenever you refer to something on screen. It
+  can also ask niri which windows are open. Both are allowed without asking,
+  except at the *Ask for everything* level.
 - **Cost:** it uses more tokens than the normal chat, because Claude Code's
   tools and instructions are sent along. Normal chat stays lean.
 
