@@ -8,6 +8,7 @@ The QML widget calls this script for everything that is not UI:
     duxai.py load ID   print one saved chat
     duxai.py delete ID delete one chat (or "all")
     duxai.py capture   let the user select a screen region, print the image path
+    duxai.py selection print the text currently highlighted anywhere on screen
 
 Claude is reached through the Claude Code CLI (`claude -p`), so it runs on your
 Pro/Max subscription login. No API key needed.
@@ -50,6 +51,9 @@ SYSTEM_PROMPT = (
 
 # Flags that cut tokens/startup work. Each one is only passed if the installed
 # `claude` version supports it (checked once via `claude --help`).
+# Selected text longer than this is cut off (a whole page is ~3000 tokens).
+MAX_QUOTE_CHARS = 20000
+
 LEAN_FLAGS = ["--strict-mcp-config", "--disable-slash-commands", "--safe-mode"]
 
 
@@ -275,12 +279,16 @@ def cmd_ask(args):
         image_path = str(Path(args.image).resolve())
         media, b64 = prepare_image(image_path, args.max_image_side)
         content.append({"type": "image", "source": {"type": "base64", "media_type": media, "data": b64}})
-    prompt = args.prompt or ("What is this?" if image_path else "")
+    quote = args.quote.strip()[:MAX_QUOTE_CHARS]
+    prompt = args.prompt or ("What is this?" if image_path else "Explain this." if quote else "")
+    if quote:
+        prompt = f"<selected_text>\n{quote}\n</selected_text>\n\n{prompt}"
     content.append({"type": "text", "text": prompt})
 
     if not chat["messages"]:
-        chat["title"] = make_title(args.prompt or "Screenshot")
-    chat["messages"].append({"role": "user", "text": args.prompt, "image": image_path, "time": now()})
+        chat["title"] = make_title(args.prompt or quote or "Screenshot")
+    chat["messages"].append({"role": "user", "text": args.prompt, "image": image_path,
+                             "quote": quote, "time": now()})
     chat.update(model=args.model, effort=args.effort, updated=now())
     save_chat(chat)
 
@@ -392,7 +400,7 @@ def cmd_capture(_args):
     path = None
     if shutil.which("dms"):
         out = subprocess.run(
-            ["dms", "screenshot", "region", "--no-clipboard", "--no-notify", "--no-confirm",
+            ["dms", "screenshot", "region", "--no-clipboard", "--no-notify", "--no-confirm", "--reset",
              "--json", "-d", str(IMAGES_DIR), "--filename", name + ".png"],
             capture_output=True, text=True)
         for line in out.stdout.splitlines():
@@ -416,6 +424,21 @@ def cmd_capture(_args):
         return 0
     emit(type="cancelled")
     return 0
+
+
+def cmd_selection(_args):
+    """Text the user highlighted (Wayland "primary selection"), else the clipboard."""
+    if not shutil.which("wl-paste"):
+        emit(type="error", message="Install wl-clipboard to grab selected text: sudo dnf install wl-clipboard")
+        return 1
+    for extra in (["--primary"], []):
+        out = subprocess.run(["wl-paste", "--no-newline", "--type", "text", *extra],
+                             capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            emit(type="selection", text=out.stdout[:MAX_QUOTE_CHARS], primary=bool(extra))
+            return 0
+    emit(type="error", message="No selected text found. Highlight some text first.")
+    return 1
 
 
 # ---------------------------------------------------------- list / load ----
@@ -458,6 +481,7 @@ def main(argv=None):
     ask.add_argument("--model", default="sonnet")
     ask.add_argument("--effort", default="medium")
     ask.add_argument("--image", default="")
+    ask.add_argument("--quote", default="", help="selected text to ask about")
     ask.add_argument("--web", action="store_true", help="allow web search tools")
     ask.add_argument("--max-image-side", type=int, default=1280)
     ask.add_argument("--extra", default="", help="extra system prompt instructions")
@@ -472,6 +496,7 @@ def main(argv=None):
     delete.add_argument("id", help='chat id or "all"')
     delete.set_defaults(func=cmd_delete)
     sub.add_parser("capture").set_defaults(func=cmd_capture)
+    sub.add_parser("selection").set_defaults(func=cmd_selection)
 
     args = parser.parse_args(argv)
     return args.func(args)

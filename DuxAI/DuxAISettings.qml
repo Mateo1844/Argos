@@ -98,7 +98,7 @@ PluginSettings {
     StyledText {
         width: parent.width
         wrapMode: Text.WordWrap
-        text: "Keyboard shortcut (niri): add this to ~/.config/niri/config.kdl inside binds { }:\nMod+Shift+A { spawn \"dms\" \"ipc\" \"call\" \"widget\" \"openWith\" \"duxAi\" \"capture\"; }"
+        text: "Keyboard shortcuts (niri): add this to ~/.config/niri/config.kdl inside binds { }:\nMod+Shift+A { spawn \"dms\" \"ipc\" \"call\" \"widget\" \"openWith\" \"duxAi\" \"capture\"; }\nMod+Shift+X { spawn \"dms\" \"ipc\" \"call\" \"widget\" \"openWith\" \"duxAi\" \"text\"; }"
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.onSurfaceVariant
     }

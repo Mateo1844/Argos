@@ -50,5 +50,8 @@ Next steps:
 
      Mod+Shift+A hotkey-overlay-title="Ask Claude about screen" { spawn "dms" "ipc" "call" "widget" "openWith" "duxAi" "capture"; }
 
+     Mod+Shift+X hotkey-overlay-title="Ask Claude about selected text" { spawn "dms" "ipc" "call" "widget" "openWith" "duxAi" "text"; }
+
      (Mod+A is already the DMS Control Center.)
+  3. For selected text: sudo dnf install wl-clipboard
 EOF

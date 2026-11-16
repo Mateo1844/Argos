@@ -37,18 +37,24 @@ PluginComponent {
                 label: s.charAt(0).toUpperCase() + s.slice(1)
             }))
     readonly property var effortOptions: [
-        { value: "low", label: "Think: low" },
-        { value: "medium", label: "Think: medium" },
-        { value: "high", label: "Think: high" },
-        { value: "xhigh", label: "Think: extra high" },
-        { value: "max", label: "Think: max" }
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High" },
+        { value: "xhigh", label: "Extra high" },
+        { value: "max", label: "Max" }
     ]
+
+    // One step bigger than the DMS defaults.
+    readonly property real fsSmall: Theme.fontSizeMedium
+    readonly property real fsBody: Theme.fontSizeLarge
+    readonly property real fsTitle: Theme.fontSizeLarge + 3
 
     // --------------------------------------------------------------- state --
     property string view: "chat"        // "chat" or "history"
     property string chatId: ""          // "" = new, unsaved chat
     property string chatTitle: ""
     property string pendingImage: ""    // screenshot waiting to be sent
+    property string pendingQuote: ""    // selected text waiting to be sent
     property bool busy: false
     property bool gotFinal: false
     property string status: ""
@@ -60,7 +66,7 @@ PluginComponent {
     signal scrollToEnd
 
     ListModel {
-        id: messages   // { role, text, image, isError }
+        id: messages   // { role, text, image, quote, isError }
     }
 
     function setModel(value) {
@@ -84,6 +90,8 @@ PluginComponent {
     function openWithMode(mode) {
         if (mode === "capture")
             startCapture();
+        else if (mode === "text")
+            grabSelection();
         else
             openPopout();
     }
@@ -115,6 +123,20 @@ PluginComponent {
         })
     }
 
+    // Text highlighted anywhere on screen (Wayland primary selection).
+    function grabSelection() {
+        Proc.runCommand("duxAi.selection", ["python3", root.backend, "selection"], (out, code) => {
+            const ev = root.lastJson(out);
+            if (ev?.type === "selection") {
+                root.pendingQuote = ev.text;
+                root.view = "chat";
+            } else if (ev?.type === "error") {
+                ToastService.showError("DUX-AI: " + ev.message);
+            }
+            root.openPopout();
+        });
+    }
+
     // ---------------------------------------------------------------- chat --
     function shortTitle(text) {
         text = text.replace(/\s+/g, " ").trim();
@@ -123,13 +145,13 @@ PluginComponent {
 
     function send(text) {
         text = text.trim();
-        if (busy || (!text && !pendingImage))
+        if (busy || (!text && !pendingImage && !pendingQuote))
             return false;
 
-        messages.append({ role: "user", text: text, image: pendingImage, isError: false });
-        messages.append({ role: "assistant", text: "", image: "", isError: false });
+        messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, isError: false });
+        messages.append({ role: "assistant", text: "", image: "", quote: "", isError: false });
         if (!chatId)
-            chatTitle = shortTitle(text);
+            chatTitle = shortTitle(text || pendingQuote);
 
         const cmd = ["python3", backend, "ask", "--model=" + model, "--effort=" + effort,
                      "--max-image-side=" + maxImageSide];
@@ -137,6 +159,8 @@ PluginComponent {
             cmd.push("--chat=" + chatId);
         if (pendingImage)
             cmd.push("--image=" + pendingImage);
+        if (pendingQuote)
+            cmd.push("--quote=" + pendingQuote);
         if (allowWeb)
             cmd.push("--web");
         if (extraInstructions)
@@ -144,6 +168,7 @@ PluginComponent {
         cmd.push("--", text);
 
         pendingImage = "";
+        pendingQuote = "";
         busy = true;
         gotFinal = false;
         status = "";
@@ -259,7 +284,7 @@ PluginComponent {
                 return;
             messages.clear();
             for (const m of ev.chat.messages)
-                messages.append({ role: m.role, text: m.text || "", image: m.image || "", isError: false });
+                messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", isError: false });
             chatId = ev.chat.id;
             chatTitle = ev.chat.title;
             view = "chat";
@@ -390,7 +415,7 @@ PluginComponent {
                         Layout.fillWidth: true
                         Layout.leftMargin: Theme.spacingS
                         text: root.view === "history" ? "Chats" : (root.chatTitle || "Claude")
-                        font.pixelSize: Theme.fontSizeLarge
+                        font.pixelSize: root.fsTitle
                         font.weight: Font.Medium
                         color: Theme.onSurface
                         elide: Text.ElideRight
@@ -398,6 +423,10 @@ PluginComponent {
                     IconBtn {
                         icon: "screenshot_region"
                         onClicked: root.startCapture()
+                    }
+                    IconBtn {
+                        icon: "format_quote"
+                        onClicked: root.grabSelection()
                     }
                     IconBtn {
                         icon: "edit_square"
@@ -438,7 +467,7 @@ PluginComponent {
                         StyledText {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: "How can I help?"
-                            font.pixelSize: Theme.fontSizeLarge
+                            font.pixelSize: root.fsTitle
                             color: Theme.onSurface
                         }
                         StyledText {
@@ -446,8 +475,8 @@ PluginComponent {
                             width: win.width - 60
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
-                            text: "Tip: right-click the bar icon or press your shortcut to select something on screen and ask about it."
-                            font.pixelSize: Theme.fontSizeSmall
+                            text: "Tip: right-click the bar icon or press Mod+Shift+A to ask about part of your screen. Highlight text and press Mod+Shift+X to ask about it."
+                            font.pixelSize: root.fsSmall
                             color: Theme.onSurfaceVariant
                         }
                     }
@@ -467,6 +496,7 @@ PluginComponent {
                             required property string role
                             required property string text
                             required property string image
+                            required property string quote
                             required property bool isError
                             readonly property bool isUser: role === "user"
                             readonly property bool isLast: index === messages.count - 1
@@ -477,7 +507,7 @@ PluginComponent {
                             Rectangle {
                                 id: bubble
                                 anchors.right: msg.isUser ? parent.right : undefined
-                                width: msg.isUser ? Math.min(parent.width * 0.85, Math.max(body.implicitWidth, msg.image !== "" ? 240 : 0) + 24) : parent.width
+                                width: msg.isUser ? Math.min(parent.width * 0.85, Math.max(body.implicitWidth, msg.image !== "" || msg.quote !== "" ? 240 : 0) + 24) : parent.width
                                 height: content.implicitHeight + (msg.isUser ? 16 : 4)
                                 radius: Theme.cornerRadius * 1.5
                                 color: msg.isUser ? Theme.withAlpha(root.accent, 0.16) : "transparent"
@@ -505,6 +535,36 @@ PluginComponent {
                                         }
                                     }
 
+                                    // Selected text the question was about
+                                    Rectangle {
+                                        visible: msg.quote !== ""
+                                        width: content.width
+                                        height: visible ? quoteText.implicitHeight + 12 : 0
+                                        radius: Theme.cornerRadius
+                                        color: Theme.withAlpha(Theme.onSurface, 0.06)
+                                        Rectangle {
+                                            width: 3
+                                            height: parent.height - 12
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            x: 6
+                                            radius: 2
+                                            color: root.accent
+                                        }
+                                        StyledText {
+                                            id: quoteText
+                                            x: 16
+                                            y: 6
+                                            width: parent.width - 24
+                                            text: msg.quote
+                                            maximumLineCount: 4
+                                            elide: Text.ElideRight
+                                            wrapMode: Text.Wrap
+                                            font.italic: true
+                                            font.pixelSize: root.fsSmall
+                                            color: Theme.onSurfaceVariant
+                                        }
+                                    }
+
                                     // Streaming placeholder
                                     Row {
                                         visible: !msg.isUser && msg.text === "" && msg.isLast && root.busy
@@ -515,7 +575,7 @@ PluginComponent {
                                         }
                                         StyledText {
                                             text: root.status || "Thinking…"
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: root.fsSmall
                                             color: Theme.onSurfaceVariant
                                             anchors.verticalCenter: parent.verticalCenter
                                         }
@@ -532,7 +592,7 @@ PluginComponent {
                                         selectByMouse: true
                                         color: msg.isError ? Theme.error : Theme.onSurface
                                         selectionColor: Theme.withAlpha(Theme.primary, 0.35)
-                                        font.pixelSize: Theme.fontSizeMedium
+                                        font.pixelSize: root.fsBody
                                         onLinkActivated: link => Qt.openUrlExternally(link)
                                     }
                                 }
@@ -607,12 +667,12 @@ PluginComponent {
                                     text: row.modelData.title
                                     elide: Text.ElideRight
                                     color: Theme.onSurface
-                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.pixelSize: root.fsBody
                                 }
                                 StyledText {
                                     text: Qt.formatDateTime(new Date(row.modelData.updated * 1000), "d MMM yyyy, HH:mm") + "  ·  " + row.modelData.model + "  ·  " + row.modelData.count + " messages"
                                     color: Theme.onSurfaceVariant
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: root.fsSmall
                                 }
                             }
                             IconBtn {
@@ -643,13 +703,13 @@ PluginComponent {
                         StyledText {
                             Layout.fillWidth: true
                             text: "Saved chats use " + (root.storageText || "0 B")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: root.fsSmall
                             color: Theme.onSurfaceVariant
                         }
                         StyledText {
                             visible: root.historyItems.length > 0
                             text: root.confirmDeleteAll ? "Click again to delete all" : "Delete all"
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: root.fsSmall
                             color: Theme.error
                             MouseArea {
                                 anchors.fill: parent
@@ -683,7 +743,7 @@ PluginComponent {
                         anchors.leftMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Selection attached"
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: root.fsSmall
                         color: Theme.onSurfaceVariant
                     }
                     IconBtn {
@@ -692,6 +752,45 @@ PluginComponent {
                         anchors.verticalCenter: parent.verticalCenter
                         icon: "close"
                         onClicked: root.pendingImage = ""
+                    }
+                }
+
+                // ---- attached text ----
+                Rectangle {
+                    visible: root.view === "chat" && root.pendingQuote !== ""
+                    Layout.fillWidth: true
+                    height: 56
+                    radius: Theme.cornerRadius
+                    color: Theme.withAlpha(Theme.onSurface, 0.05)
+
+                    DIcon {
+                        id: quoteIcon
+                        x: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "format_quote"
+                        size: 22
+                        color: root.accent
+                    }
+                    StyledText {
+                        anchors.left: quoteIcon.right
+                        anchors.leftMargin: 10
+                        anchors.right: quoteClose.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.pendingQuote.replace(/\s+/g, " ")
+                        maximumLineCount: 2
+                        wrapMode: Text.Wrap
+                        elide: Text.ElideRight
+                        font.italic: true
+                        font.pixelSize: root.fsSmall
+                        color: Theme.onSurfaceVariant
+                    }
+                    IconBtn {
+                        id: quoteClose
+                        anchors.right: parent.right
+                        anchors.rightMargin: 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        icon: "close"
+                        onClicked: root.pendingQuote = ""
                     }
                 }
 
@@ -718,10 +817,10 @@ PluginComponent {
 
                             TextArea {
                                 id: input
-                                placeholderText: root.pendingImage ? "Ask about your selection…" : "Ask Claude…"
+                                placeholderText: root.pendingImage || root.pendingQuote ? "Ask about your selection…" : "Ask Claude…"
                                 placeholderTextColor: Theme.onSurfaceVariant
                                 color: Theme.onSurface
-                                font.pixelSize: Theme.fontSizeMedium
+                                font.pixelSize: root.fsBody
                                 wrapMode: TextArea.Wrap
                                 background: null
                                 padding: 0
@@ -769,7 +868,7 @@ PluginComponent {
                                 Layout.preferredWidth: 32
                                 Layout.preferredHeight: 32
                                 radius: 16
-                                readonly property bool canSend: input.text.trim() !== "" || root.pendingImage !== ""
+                                readonly property bool canSend: input.text.trim() !== "" || root.pendingImage !== "" || root.pendingQuote !== ""
                                 color: root.busy ? Theme.withAlpha(Theme.onSurface, 0.12) : (canSend ? root.accent : Theme.withAlpha(Theme.onSurface, 0.08))
                                 DIcon {
                                     anchors.centerIn: parent
