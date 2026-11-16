@@ -304,13 +304,17 @@ PluginComponent {
         Proc.runCommand("duxAi.delete", ["python3", backend, "delete", "all"], out => applyList(out));
     }
 
-    // Optional custom logo: put an SVG at DuxAI/assets/logo.svg
-    readonly property string logoPath: decodeURIComponent(String(Qt.resolvedUrl("assets/logo.svg")).replace("file://", ""))
-    property bool hasLogo: false
+    // Optional custom logo: put an SVG at DuxAI/assets/logo.svg.
+    // The backend makes a white copy so it is visible on the colored circle.
+    property string logoPath: ""
+    readonly property bool hasLogo: logoPath !== ""
 
     Component.onCompleted: {
         refreshHistory();
-        Proc.runCommand("duxAi.logo", ["test", "-s", logoPath], (out, code) => hasLogo = code === 0);
+        Proc.runCommand("duxAi.logo", ["python3", backend, "logo"], out => {
+            const ev = lastJson(out);
+            logoPath = ev?.path || "";
+        });
     }
 
     // ------------------------------------------------------------ bar pill --
@@ -323,32 +327,13 @@ PluginComponent {
             implicitWidth: root.iconSize + 6
             implicitHeight: root.iconSize + 6
 
-            Rectangle {
+            LogoCircle {
                 id: circle
                 anchors.centerIn: parent
-                width: parent.implicitWidth
-                height: width
-                radius: width / 2
-                color: root.accent
-
-                Image {
-                    id: logo
-                    anchors.fill: parent
-                    anchors.margins: parent.width * 0.18
-                    source: root.hasLogo ? "file://" + root.logoPath : ""
-                    sourceSize: Qt.size(width * 2, height * 2)
-                    fillMode: Image.PreserveAspectFit
-                    smooth: true
-                    visible: status === Image.Ready
-                }
-                DIcon {
-                    anchors.centerIn: parent
-                    visible: logo.status !== Image.Ready
-                    name: "auto_awesome"
-                    size: parent.width * 0.62
-                    filled: true
-                    color: "white"
-                }
+                size: parent.implicitWidth
+                accent: root.accent
+                logoPath: root.logoPath
+                hasLogo: root.hasLogo
 
                 // Gentle pulse while Claude is answering.
                 SequentialAnimation on opacity {
@@ -398,18 +383,13 @@ PluginComponent {
                     Layout.fillWidth: true
                     spacing: 2
 
-                    Rectangle {
+                    LogoCircle {
                         Layout.preferredWidth: 26
                         Layout.preferredHeight: 26
-                        radius: 13
-                        color: root.accent
-                        DIcon {
-                            anchors.centerIn: parent
-                            name: "auto_awesome"
-                            size: 16
-                            filled: true
-                            color: "white"
-                        }
+                        size: 26
+                        accent: root.accent
+                        logoPath: root.logoPath
+                        hasLogo: root.hasLogo
                     }
                     StyledText {
                         Layout.fillWidth: true
@@ -457,12 +437,12 @@ PluginComponent {
                         spacing: Theme.spacingS
                         visible: messages.count === 0
 
-                        DIcon {
+                        LogoCircle {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            name: "auto_awesome"
-                            size: 40
-                            filled: true
-                            color: root.accent
+                            size: 48
+                            accent: root.accent
+                            logoPath: root.logoPath
+                            hasLogo: root.hasLogo
                         }
                         StyledText {
                             anchors.horizontalCenter: parent.horizontalCenter
