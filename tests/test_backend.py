@@ -133,6 +133,52 @@ class BackendTest(unittest.TestCase):
         self.assertIn('fill="#ffffff"', svg)
         self.assertNotIn('width="1em"', svg)
 
+    def run_agent(self, allow, *extra):
+        proc = subprocess.Popen([sys.executable, str(BACKEND), "ask", "--agent", *extra, "--", "list my downloads"],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=self.env)
+        events = []
+        for line in proc.stdout:
+            ev = json.loads(line)
+            events.append(ev)
+            if ev["type"] == "permission":
+                proc.stdin.write(json.dumps({"id": ev["id"], "allow": allow}) + "\n")
+                proc.stdin.flush()
+        proc.wait(timeout=30)
+        return events
+
+    def test_agent_permission_allow(self):
+        events = self.run_agent(True, "--window=Dolphin - ~/Downloads")
+        perm = next(e for e in events if e["type"] == "permission")
+        self.assertEqual(perm["summary"], "Run: ls ~/Downloads")
+        self.assertIn("Run: ls ~/Downloads", [e["text"] for e in events if e["type"] == "step"])
+        self.assertEqual(events[-1]["text"], "Command was allowed.")
+        call = self.calls()[0]
+        argv = call["argv"]
+        self.assertIn("--permission-prompt-tool", argv)
+        self.assertNotIn("--safe-mode", argv)            # agent mode uses your normal setup
+        rules = json.loads(argv[argv.index("--settings") + 1])["permissions"]
+        self.assertIn("Bash(sudo *)", rules["deny"])
+        text = call["message"]["message"]["content"][0]["text"]
+        self.assertTrue(text.startswith("[Active window: Dolphin - ~/Downloads]"))
+        reply = json.loads(self.log.read_text().splitlines()[-1])["reply"]
+        self.assertEqual(reply["response"]["request_id"], "req-1")
+        self.assertEqual(reply["response"]["response"]["updatedInput"], {"command": "ls ~/Downloads"})
+
+    def test_agent_permission_deny(self):
+        events = self.run_agent(False)
+        self.assertEqual(events[-1]["text"], "Command was denyed.")   # fake claude's grammar
+
+    def test_permission_rules(self):
+        sys.path.insert(0, str(BACKEND.parent))
+        import duxai
+        r = duxai.permission_rules("trusted", "~/DUX-AI, /data/x", "Documents/KUL", "~/Secret")
+        self.assertIn("Edit(~/DUX-AI/**)", r["allow"])
+        self.assertIn("Edit(//data/x/**)", r["allow"])
+        self.assertIn("Edit(~/Documents/KUL/**)", r["ask"])
+        self.assertIn("Read(~/Secret/**)", r["deny"])
+        self.assertIn("Bash", duxai.permission_rules("ask_all", "", "", "")["ask"])
+        self.assertEqual(duxai.permission_rules("ask_changes", "~/x", "", "")["allow"], [])
+
     def test_missing_claude(self):
         env = dict(self.env, PATH="/usr/bin:/bin")
         events = self.run_backend("ask", "--", "hi", env=env)

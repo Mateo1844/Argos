@@ -226,6 +226,12 @@ PluginComponent {
     readonly property bool allowWeb: pluginData.allowWeb ?? false
     readonly property int maxImageSide: parseInt(pluginData.maxImageSide || "1280")
     readonly property string extraInstructions: pluginData.extraInstructions || ""
+    readonly property bool includeWindow: pluginData.includeWindow ?? true
+    // Agent mode (Claude may use your computer, asks before changes)
+    readonly property string permLevel: pluginData.permLevel || "ask_changes"
+    readonly property string trustedFolders: pluginData.trustedFolders || ""
+    readonly property string askFolders: pluginData.askFolders || ""
+    readonly property string denyFolders: pluginData.denyFolders || ""
     readonly property bool useThemeColor: pluginData.pillColor === "theme"
     readonly property color accent: useThemeColor ? Theme.primary : "#D97757"
     readonly property bool pillTransparent: pluginData.pillColor === "transparent"
@@ -260,6 +266,12 @@ PluginComponent {
     property var historyItems: []
     property string storageText: ""
     property bool confirmDeleteAll: false
+    property bool agentMode: pluginData.agentDefault ?? false
+    property var permission: null       // { id, summary, reason } while Claude waits for Allow/Deny
+    property string windowApp: ""       // active window when the chat was opened
+    property string windowTitle: ""
+    property bool windowOn: true        // ✕ on the window chip turns it off
+    readonly property string windowText: windowApp ? windowApp + (windowTitle ? " — " + windowTitle : "") : ""
     property var tokens: null           // { total, context, last: { input, cached, output } }
 
     function fmtTokens(n) {
@@ -271,7 +283,7 @@ PluginComponent {
     signal scrollToEnd
 
     ListModel {
-        id: messages   // { role, text, image, quote, isError }
+        id: messages   // { role, text, image, quote, window, steps, isError }
     }
 
     function setModel(value) {
@@ -282,6 +294,27 @@ PluginComponent {
     function setEffort(value) {
         effortOverride = value;
         pluginService?.savePluginData("duxAi", "effort", value);
+    }
+
+    // ------------------------------------------------------- active window --
+    // Which app/window you were looking at, so "this folder" etc. makes sense.
+    function fetchWindow() {
+        if (!includeWindow || busy)
+            return;
+        Proc.runCommand("duxAi.window", ["python3", backend, "window"], out => {
+            const ev = lastJson(out);
+            if (ev?.type !== "window")
+                return;
+            if (ev.app !== windowApp || ev.title !== windowTitle)
+                windowOn = true;   // new window -> show the chip again
+            windowApp = ev.app;
+            windowTitle = ev.title;
+        });
+    }
+
+    onInteractionActiveChanged: {
+        if (interactionActive)
+            fetchWindow();
     }
 
     // ------------------------------------------------------- popout control --
@@ -308,15 +341,26 @@ PluginComponent {
     }
 
     // ------------------------------------------------------------- capture --
+    property bool captureWholeWindow: false
+
     function startCapture() {
+        fetchWindow();
+        captureWholeWindow = false;
         root.closePopout();          // get the window out of the way first
+        captureTimer.restart();
+    }
+
+    // Screenshot of the whole active window (camera button on the window chip).
+    function captureWindow() {
+        captureWholeWindow = true;
+        root.closePopout();
         captureTimer.restart();
     }
 
     Timer {
         id: captureTimer
         interval: 300                // let the popout finish closing
-        onTriggered: Proc.runCommand("duxAi.capture", ["python3", root.backend, "capture"], (out, code) => {
+        onTriggered: Proc.runCommand("duxAi.capture", ["python3", root.backend, "capture"].concat(root.captureWholeWindow ? ["--window"] : []), (out, code) => {
             const ev = root.lastJson(out);
             if (ev?.type === "captured") {
                 root.pendingImage = ev.path;
@@ -330,6 +374,7 @@ PluginComponent {
 
     // Text highlighted anywhere on screen (Wayland primary selection).
     function grabSelection() {
+        fetchWindow();
         Proc.runCommand("duxAi.selection", ["python3", root.backend, "selection"], (out, code) => {
             const ev = root.lastJson(out);
             if (ev?.type === "selection") {
@@ -353,8 +398,9 @@ PluginComponent {
         if (busy || (!text && !pendingImage && !pendingQuote))
             return false;
 
-        messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, isError: false });
-        messages.append({ role: "assistant", text: "", image: "", quote: "", isError: false });
+        const win = includeWindow && windowOn ? windowText : "";
+        messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, window: win, steps: "", isError: false });
+        messages.append({ role: "assistant", text: "", image: "", quote: "", window: "", steps: "", isError: false });
         if (!chatId)
             chatTitle = shortTitle(text || pendingQuote);
 
@@ -370,6 +416,11 @@ PluginComponent {
             cmd.push("--web");
         if (extraInstructions)
             cmd.push("--extra=" + extraInstructions);
+        if (win)
+            cmd.push("--window=" + win);
+        if (agentMode)
+            cmd.push("--agent", "--perm=" + permLevel, "--trusted=" + trustedFolders,
+                     "--ask-dirs=" + askFolders, "--deny-dirs=" + denyFolders);
         cmd.push("--", text);
 
         pendingImage = "";
@@ -383,7 +434,16 @@ PluginComponent {
         return true;
     }
 
+    // Allow / Deny buttons -> backend stdin -> Claude Code.
+    function answerPermission(allow) {
+        if (!permission)
+            return;
+        askProc.write(JSON.stringify({ id: permission.id, allow: allow }) + "\n");
+        permission = null;
+    }
+
     function stop() {
+        permission = null;
         if (askProc.running)
             askProc.running = false;   // SIGTERM: backend stops claude and keeps the partial answer
     }
@@ -417,6 +477,22 @@ PluginComponent {
         case "status":
             status = ev.text;
             break;
+        case "step":
+            if (last >= 0) {
+                const steps = messages.get(last).steps;
+                messages.setProperty(last, "steps", steps ? steps + "\n" + ev.text : ev.text);
+            }
+            status = ev.text;
+            scrollToEnd();
+            break;
+        case "permission":
+            permission = { id: ev.id, summary: ev.summary, reason: ev.reason || "" };
+            scrollToEnd();
+            break;
+        case "permission_cancel":
+            if (permission && permission.id === ev.id)
+                permission = null;
+            break;
         case "done":
             gotFinal = true;
             if (ev.tokens)
@@ -434,6 +510,7 @@ PluginComponent {
 
     Process {
         id: askProc
+        stdinEnabled: true             // used to send Allow/Deny answers
         stdout: SplitParser {
             onRead: line => root.handleEvent(line)
         }
@@ -445,6 +522,7 @@ PluginComponent {
                 root.setLastText(partial ? partial + "\n\n*(stopped)*" : "Stopped (backend exit code " + code + ").", !partial);
             }
             root.busy = false;
+            root.permission = null;
             root.status = "";
             root.refreshHistory();
         }
@@ -492,7 +570,7 @@ PluginComponent {
                 return;
             messages.clear();
             for (const m of ev.chat.messages)
-                messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", isError: false });
+                messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", window: m.window || "", steps: (m.steps || []).join("\n"), isError: false });
             chatId = ev.chat.id;
             chatTitle = ev.chat.title;
             tokens = ev.tokens || null;
@@ -693,6 +771,8 @@ PluginComponent {
                             required property string text
                             required property string image
                             required property string quote
+                            required property string window
+                            required property string steps
                             required property bool isError
                             readonly property bool isUser: role === "user"
                             readonly property bool isLast: index === messages.count - 1
@@ -753,6 +833,27 @@ PluginComponent {
                                         }
                                     }
 
+                                    // Which window the question was asked from
+                                    Row {
+                                        visible: msg.isUser && msg.window !== ""
+                                        width: content.width
+                                        spacing: 6
+                                        DIcon {
+                                            name: "select_window"
+                                            size: 14
+                                            color: Theme.onSurfaceVariant
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                        StyledText {
+                                            width: parent.width - 20
+                                            text: msg.window
+                                            elide: Text.ElideMiddle
+                                            font.pixelSize: root.fsSmall - 1
+                                            color: Theme.onSurfaceVariant
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                    }
+
                                     // Selected text the question was about
                                     Rectangle {
                                         visible: msg.quote !== ""
@@ -780,6 +881,36 @@ PluginComponent {
                                             font.italic: true
                                             font.pixelSize: root.fsSmall
                                             color: Theme.onSurfaceVariant
+                                        }
+                                    }
+
+                                    // Agent mode: what Claude did ("Read ~/x", "Run: ls")
+                                    Column {
+                                        visible: !msg.isUser && msg.steps !== ""
+                                        width: content.width
+                                        spacing: 2
+                                        Repeater {
+                                            model: msg.steps ? msg.steps.split("\n") : []
+                                            Row {
+                                                required property string modelData
+                                                width: content.width
+                                                spacing: 6
+                                                DIcon {
+                                                    name: "subdirectory_arrow_right"
+                                                    size: 14
+                                                    color: Theme.withAlpha(Theme.onSurfaceVariant, 0.8)
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+                                                StyledText {
+                                                    width: parent.width - 20
+                                                    text: modelData
+                                                    elide: Text.ElideRight
+                                                    font.family: "monospace"
+                                                    font.pixelSize: root.fsSmall - 1
+                                                    color: Theme.withAlpha(Theme.onSurfaceVariant, 0.8)
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+                                            }
                                         }
                                     }
 
@@ -938,6 +1069,154 @@ PluginComponent {
                     }
                 }
 
+                // ---- Allow / Deny card (agent mode) ----
+                Rectangle {
+                    visible: root.view === "chat" && root.permission !== null
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: permCol.implicitHeight + 20
+                    radius: Theme.cornerRadius
+                    color: Theme.withAlpha(root.accent, 0.10)
+                    border.width: 1
+                    border.color: Theme.withAlpha(root.accent, 0.55)
+
+                    Column {
+                        id: permCol
+                        x: 12
+                        y: 10
+                        width: parent.width - 24
+                        spacing: 8
+
+                        Row {
+                            spacing: 6
+                            DIcon {
+                                name: "shield_question"
+                                size: 18
+                                color: root.accent
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            StyledText {
+                                text: "Claude wants to:"
+                                font.pixelSize: root.fsSmall
+                                font.weight: Font.Medium
+                                color: Theme.onSurface
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        StyledText {
+                            width: parent.width
+                            text: root.permission ? root.permission.summary : ""
+                            wrapMode: Text.WrapAnywhere
+                            maximumLineCount: 6
+                            elide: Text.ElideRight
+                            font.family: "monospace"
+                            font.pixelSize: root.fsSmall
+                            color: Theme.onSurface
+                        }
+                        StyledText {
+                            visible: text !== ""
+                            width: parent.width
+                            text: root.permission ? root.permission.reason : ""
+                            wrapMode: Text.Wrap
+                            font.pixelSize: root.fsSmall - 1
+                            color: Theme.onSurfaceVariant
+                        }
+                        Row {
+                            anchors.right: parent.right
+                            spacing: 8
+                            Rectangle {
+                                width: denyText.implicitWidth + 28
+                                height: 30
+                                radius: 15
+                                color: denyMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.14) : Theme.withAlpha(Theme.onSurface, 0.07)
+                                StyledText {
+                                    id: denyText
+                                    anchors.centerIn: parent
+                                    text: "Deny"
+                                    font.pixelSize: root.fsSmall
+                                    color: Theme.onSurface
+                                }
+                                MouseArea {
+                                    id: denyMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.answerPermission(false)
+                                }
+                            }
+                            Rectangle {
+                                width: allowText.implicitWidth + 28
+                                height: 30
+                                radius: 15
+                                color: allowMouse.containsMouse ? Qt.lighter(root.accent, 1.1) : root.accent
+                                StyledText {
+                                    id: allowText
+                                    anchors.centerIn: parent
+                                    text: "Allow"
+                                    font.pixelSize: root.fsSmall
+                                    font.weight: Font.Medium
+                                    color: "white"
+                                }
+                                MouseArea {
+                                    id: allowMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.answerPermission(true)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- active window chip ----
+                Rectangle {
+                    visible: root.view === "chat" && root.includeWindow && root.windowOn && root.windowText !== "" && root.permission === null
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 32
+                    radius: Theme.cornerRadius
+                    color: Theme.withAlpha(Theme.onSurface, 0.05)
+
+                    DIcon {
+                        id: winIcon
+                        x: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "select_window"
+                        size: 16
+                        color: Theme.onSurfaceVariant
+                    }
+                    StyledText {
+                        anchors.left: winIcon.right
+                        anchors.leftMargin: 8
+                        anchors.right: winShot.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.windowText
+                        elide: Text.ElideMiddle
+                        font.pixelSize: root.fsSmall
+                        color: Theme.onSurfaceVariant
+                    }
+                    IconBtn {
+                        id: winShot
+                        anchors.right: winClose.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        implicitWidth: 28
+                        implicitHeight: 28
+                        iconSize: 16
+                        icon: "photo_camera"
+                        onClicked: root.captureWindow()
+                    }
+                    IconBtn {
+                        id: winClose
+                        anchors.right: parent.right
+                        anchors.rightMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        implicitWidth: 28
+                        implicitHeight: 28
+                        iconSize: 16
+                        icon: "close"
+                        onClicked: root.windowOn = false
+                    }
+                }
+
                 // ---- attached screenshot ----
                 Rectangle {
                     visible: root.view === "chat" && root.pendingImage !== ""
@@ -1037,7 +1316,7 @@ PluginComponent {
 
                             TextArea {
                                 id: input
-                                placeholderText: root.pendingImage || root.pendingQuote ? "Ask about your selection…" : "Ask Claude…"
+                                placeholderText: root.pendingImage || root.pendingQuote ? "Ask about your selection…" : (root.agentMode ? "Ask Claude to do something on your PC…" : "Ask Claude…")
                                 placeholderTextColor: Theme.onSurfaceVariant
                                 color: Theme.onSurface
                                                                 cursorDelegate: Rectangle {
@@ -1095,6 +1374,42 @@ PluginComponent {
                                 options: root.effortOptions
                                 current: root.effort
                                 onPicked: value => root.setEffort(value)
+                            }
+
+                            // Agent mode toggle: Claude may use your computer (asks first)
+                            Rectangle {
+                                Layout.preferredWidth: agentRow.implicitWidth + 20
+                                Layout.preferredHeight: 30
+                                radius: 15
+                                color: root.agentMode ? Theme.withAlpha(root.accent, 0.22) : (agentMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.12) : Theme.withAlpha(Theme.onSurface, 0.06))
+                                border.width: root.agentMode ? 1 : 0
+                                border.color: Theme.withAlpha(root.accent, 0.6)
+                                Row {
+                                    id: agentRow
+                                    anchors.centerIn: parent
+                                    spacing: 4
+                                    DIcon {
+                                        name: "smart_toy"
+                                        size: 14
+                                        filled: root.agentMode
+                                        color: root.agentMode ? root.accent : Theme.onSurfaceVariant
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                    StyledText {
+                                        text: "Agent"
+                                        font.pixelSize: Theme.fontSizeMedium
+                                        color: Theme.onSurface
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
+                                MouseArea {
+                                    id: agentMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: !root.busy
+                                    onClicked: root.agentMode = !root.agentMode
+                                }
                             }
                             DIcon {
                                 visible: root.allowWeb

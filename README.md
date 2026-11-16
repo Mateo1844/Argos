@@ -28,6 +28,43 @@ subscription**. You don't need an API key.
 - **History page:** open, continue or delete old chats. The bottom of the page
   shows how much disk space saved chats use.
 
+## Agent mode (Claude uses your PC)
+
+Turn on the **Agent** chip next to the pickers. Claude can then read files and
+run commands on your computer, using your normal Claude Code setup (your
+settings, permissions and MCP servers). Its prompt runs in your home folder.
+
+- **It asks before changing anything.** An *Allow / Deny* card shows the
+  exact command or file. Every action Claude takes is listed as a small grey
+  step above its answer.
+- **Permission level** (Settings): *Ask for everything*, *Ask for changes*
+  (default), or *Trusted folders* (free edits only inside folders you list).
+- **Folder lists:** *Always ask for these folders* and *Never touch these
+  folders*. The order of precedence is deny > ask > allow.
+- **Always blocked:** `sudo`, `rm -rf`, `~/.ssh` and `~/.gnupg`, whatever you
+  click.
+- **Cost:** it uses more tokens than the normal chat, because Claude Code's
+  tools and instructions are sent along. Normal chat stays lean.
+
+The folder rules cover Claude's file tools. A shell command could still touch
+a file, so every command that changes something asks first and shows the full
+command. Keep backups of important work anyway.
+
+## Active window
+
+When you open the chat, DUX-AI checks which window you were looking at (via
+`niri msg` or `hyprctl`). It shows that as a chip above the input, for example
+`Dolphin — ~/Documents/KUL/Thermo`, and sends it along, which costs about 20
+tokens. So "rename the files in this folder" or "explain this file" just
+works.
+
+- ✕ leaves the window out of your next messages.
+- The camera button attaches a screenshot of that whole window.
+- In Dolphin, turn on *Configure Dolphin → Interface → Show the full path
+  inside the title bar*, so the title contains the full path.
+- To turn the window chip off completely, use the *Include active window*
+  setting.
+
 ## Install (Fedora + niri + DMS)
 
 ```bash

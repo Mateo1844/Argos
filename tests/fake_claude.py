@@ -37,6 +37,21 @@ def out(obj):
 
 
 out({"type": "system", "subtype": "init", "session_id": session})
+
+if "--permission-prompt-tool" in sys.argv:
+    # Agent mode: pretend Claude wants to run a command and ask for permission.
+    out({"type": "assistant", "parent_tool_use_id": None, "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "input": {"command": "ls ~/Downloads"}}]}})
+    out({"type": "control_request", "request_id": "req-1", "request": {
+        "subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "ls ~/Downloads"}}})
+    reply = json.loads(sys.stdin.readline())
+    behavior = reply["response"]["response"]["behavior"]
+    if os.environ.get("FAKE_CLAUDE_LOG"):
+        with open(os.environ["FAKE_CLAUDE_LOG"], "a") as log:
+            log.write(json.dumps({"reply": reply}) + "\n")
+    out({"type": "result", "subtype": "success", "is_error": False, "result": f"Command was {behavior}ed.",
+         "session_id": session, "total_cost_usd": 0, "usage": {"input_tokens": 50, "output_tokens": 5}})
+    sys.exit(0)
 out({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "thinking"}}})
 out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "hm"}}})
 out({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "text"}}})
