@@ -199,9 +199,12 @@ PluginComponent {
             width: circle.size * circle.logoScale
             height: width
             source: circle.hasLogo ? "file://" + circle.logoPath : ""
-            sourceSize: Qt.size(128, 128)
+            // Render the SVG at (about) the size it is shown, so it stays sharp:
+            // shrinking a big render down to ~16 px makes it look pixelated.
+            sourceSize: Qt.size(Math.ceil(width * 2), Math.ceil(height * 2))
             fillMode: Image.PreserveAspectFit
             smooth: true
+            mipmap: true
             visible: status === Image.Ready
         }
         DIcon {
