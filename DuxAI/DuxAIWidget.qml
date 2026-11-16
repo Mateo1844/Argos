@@ -72,7 +72,7 @@ PluginComponent {
             return current;
         }
 
-        implicitWidth: row.implicitWidth + 20
+        implicitWidth: row.implicitWidth + 16
         implicitHeight: 30
 
         Rectangle {
@@ -850,11 +850,6 @@ PluginComponent {
                         onClicked: root.newChat()
                     }
                     IconBtn {
-                        icon: "tune"
-                        active: root.quickSettingsOpen
-                        onClicked: root.quickSettingsOpen = !root.quickSettingsOpen
-                    }
-                    IconBtn {
                         icon: "history"
                         active: root.view === "history"
                         onClicked: {
@@ -863,6 +858,11 @@ PluginComponent {
                             if (root.view === "history")
                                 root.refreshHistory();
                         }
+                    }
+                    IconBtn {
+                        icon: "settings"
+                        active: root.quickSettingsOpen
+                        onClicked: root.quickSettingsOpen = !root.quickSettingsOpen
                     }
                 }
 
@@ -1367,7 +1367,7 @@ PluginComponent {
                 Rectangle {
                     visible: root.view === "chat"
                     Layout.fillWidth: true
-                    Layout.preferredHeight: inputCol.implicitHeight + 16
+                    Layout.preferredHeight: inputCol.implicitHeight + 24   // 14 top + 10 bottom (= side margin)
                     radius: Theme.cornerRadius
                     color: Theme.withAlpha(Theme.onSurface, 0.06)
                     //border.width: input.activeFocus ? 1 : 0
@@ -1431,7 +1431,7 @@ PluginComponent {
 
                         RowLayout {
                             width: parent.width
-                            spacing: 6
+                            spacing: 4
 
                             ChipMenu {
                                 icon: "neurology"
@@ -1448,7 +1448,7 @@ PluginComponent {
 
                             // Agent mode toggle: Claude may use your computer (asks first)
                             Rectangle {
-                                Layout.preferredWidth: agentRow.implicitWidth + 20
+                                Layout.preferredWidth: agentRow.implicitWidth + 16
                                 Layout.preferredHeight: 30
                                 radius: 15
                                 color: root.agentMode ? Theme.withAlpha(root.accent, 0.22) : (agentMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.12) : Theme.withAlpha(Theme.onSurface, 0.06))
@@ -1490,7 +1490,7 @@ PluginComponent {
                                 visible: root.tokens !== null && root.tokens.total > 0
                                 text: !root.tokens ? "" : (tokenMouse.containsMouse && root.tokens.last
                                     ? root.fmtTokens(root.tokens.last.input) + " in (" + root.fmtTokens(root.tokens.last.cached) + " cached) · " + root.fmtTokens(root.tokens.last.output) + " out"
-                                    : root.fmtTokens(root.tokens.total) + " tokens")
+                                    : root.fmtTokens(root.tokens.total) + " tok")
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.withAlpha(Theme.onSurfaceVariant, 0.75)
                                 MouseArea {
