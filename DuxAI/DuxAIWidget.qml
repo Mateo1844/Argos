@@ -1,0 +1,798 @@
+// DUX-AI: Claude in the DankMaterialShell top bar.
+//
+// This file is only UI. Everything else (talking to Claude, saving chats,
+// screenshots) is done by backend/duxai.py, which we run as a process and
+// which answers with one JSON object per line.
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Quickshell
+import Quickshell.Io
+import qs.Common
+import qs.Services
+import qs.DCommon.Widgets
+import qs.Modules.Plugins
+
+PluginComponent {
+    id: root
+
+    layerNamespacePlugin: "dux-ai"
+    popoutWidth: 460
+    popoutHeight: 600
+
+    // ------------------------------------------------------------ settings --
+    readonly property string backend: decodeURIComponent(String(Qt.resolvedUrl("backend/duxai.py")).replace("file://", ""))
+    property string modelOverride: ""
+    property string effortOverride: ""
+    readonly property string model: modelOverride || pluginData.model || "sonnet"
+    readonly property string effort: effortOverride || pluginData.effort || "medium"
+    readonly property bool allowWeb: pluginData.allowWeb ?? false
+    readonly property int maxImageSide: parseInt(pluginData.maxImageSide || "1280")
+    readonly property string extraInstructions: pluginData.extraInstructions || ""
+    readonly property bool useThemeColor: pluginData.pillColor === "theme"
+    readonly property color accent: useThemeColor ? Theme.primary : "#D97757"
+
+    readonly property var modelOptions: (pluginData.models || "sonnet,opus,haiku").split(",").map(s => s.trim()).filter(s => s.length > 0).map(s => ({
+                value: s,
+                label: s.charAt(0).toUpperCase() + s.slice(1)
+            }))
+    readonly property var effortOptions: [
+        { value: "low", label: "Think: low" },
+        { value: "medium", label: "Think: medium" },
+        { value: "high", label: "Think: high" },
+        { value: "xhigh", label: "Think: extra high" },
+        { value: "max", label: "Think: max" }
+    ]
+
+    // --------------------------------------------------------------- state --
+    property string view: "chat"        // "chat" or "history"
+    property string chatId: ""          // "" = new, unsaved chat
+    property string chatTitle: ""
+    property string pendingImage: ""    // screenshot waiting to be sent
+    property bool busy: false
+    property bool gotFinal: false
+    property string status: ""
+    property var historyItems: []
+    property string storageText: ""
+    property bool confirmDeleteAll: false
+
+    signal focusInput
+    signal scrollToEnd
+
+    ListModel {
+        id: messages   // { role, text, image, isError }
+    }
+
+    function setModel(value) {
+        modelOverride = value;
+        pluginService?.savePluginData("duxAi", "model", value);
+    }
+
+    function setEffort(value) {
+        effortOverride = value;
+        pluginService?.savePluginData("duxAi", "effort", value);
+    }
+
+    // ------------------------------------------------------- popout control --
+    function openPopout() {
+        if (!root.interactionActive)
+            root.triggerPopout();
+        focusTimer.restart();
+    }
+
+    // Called by `dms ipc call widget openWith duxAi <mode>` (keyboard shortcut).
+    function openWithMode(mode) {
+        if (mode === "capture")
+            startCapture();
+        else
+            openPopout();
+    }
+
+    Timer {
+        id: focusTimer
+        interval: 80
+        onTriggered: root.focusInput()
+    }
+
+    // ------------------------------------------------------------- capture --
+    function startCapture() {
+        root.closePopout();          // get the window out of the way first
+        captureTimer.restart();
+    }
+
+    Timer {
+        id: captureTimer
+        interval: 300                // let the popout finish closing
+        onTriggered: Proc.runCommand("duxAi.capture", ["python3", root.backend, "capture"], (out, code) => {
+            const ev = root.lastJson(out);
+            if (ev?.type === "captured") {
+                root.pendingImage = ev.path;
+                root.view = "chat";
+            } else if (ev?.type === "error") {
+                ToastService.showError("DUX-AI: " + ev.message);
+            }
+            root.openPopout();
+        })
+    }
+
+    // ---------------------------------------------------------------- chat --
+    function shortTitle(text) {
+        text = text.replace(/\s+/g, " ").trim();
+        return text.length > 48 ? text.slice(0, 48) + "…" : (text || "Screenshot");
+    }
+
+    function send(text) {
+        text = text.trim();
+        if (busy || (!text && !pendingImage))
+            return false;
+
+        messages.append({ role: "user", text: text, image: pendingImage, isError: false });
+        messages.append({ role: "assistant", text: "", image: "", isError: false });
+        if (!chatId)
+            chatTitle = shortTitle(text);
+
+        const cmd = ["python3", backend, "ask", "--model=" + model, "--effort=" + effort,
+                     "--max-image-side=" + maxImageSide];
+        if (chatId)
+            cmd.push("--chat=" + chatId);
+        if (pendingImage)
+            cmd.push("--image=" + pendingImage);
+        if (allowWeb)
+            cmd.push("--web");
+        if (extraInstructions)
+            cmd.push("--extra=" + extraInstructions);
+        cmd.push("--", text);
+
+        pendingImage = "";
+        busy = true;
+        gotFinal = false;
+        status = "";
+        askProc.command = cmd;
+        askProc.running = true;
+        scrollToEnd();
+        return true;
+    }
+
+    function stop() {
+        if (askProc.running)
+            askProc.running = false;   // SIGTERM: backend stops claude and keeps the partial answer
+    }
+
+    function setLastText(text, isError) {
+        const last = messages.count - 1;
+        if (last < 0)
+            return;
+        messages.setProperty(last, "text", text);
+        messages.setProperty(last, "isError", !!isError);
+    }
+
+    function handleEvent(line) {
+        let ev;
+        try {
+            ev = JSON.parse(line);
+        } catch (e) {
+            return;
+        }
+        const last = messages.count - 1;
+        switch (ev.type) {
+        case "start":
+            chatId = ev.chat;
+            break;
+        case "text":
+            if (last >= 0)
+                messages.setProperty(last, "text", messages.get(last).text + ev.text);
+            status = "";
+            scrollToEnd();
+            break;
+        case "status":
+            status = ev.text;
+            break;
+        case "done":
+            gotFinal = true;
+            setLastText(ev.text, false);
+            scrollToEnd();
+            break;
+        case "error":
+            gotFinal = true;
+            setLastText(ev.message, true);
+            scrollToEnd();
+            break;
+        }
+    }
+
+    Process {
+        id: askProc
+        stdout: SplitParser {
+            onRead: line => root.handleEvent(line)
+        }
+        onExited: (code, exitStatus) => {
+            if (!root.gotFinal) {
+                // Killed by the stop button (or crashed) before sending "done".
+                const last = messages.count - 1;
+                const partial = last >= 0 ? messages.get(last).text : "";
+                root.setLastText(partial ? partial + "\n\n*(stopped)*" : "Stopped (backend exit code " + code + ").", !partial);
+            }
+            root.busy = false;
+            root.status = "";
+            root.refreshHistory();
+        }
+    }
+
+    function newChat() {
+        if (busy)
+            return;
+        chatId = "";
+        chatTitle = "";
+        messages.clear();
+        view = "chat";
+        focusInput();
+    }
+
+    // ------------------------------------------------------------ history --
+    function lastJson(out) {
+        const lines = (out || "").trim().split("\n");
+        try {
+            return JSON.parse(lines[lines.length - 1]);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function applyList(out) {
+        const ev = lastJson(out);
+        if (ev?.type === "list") {
+            historyItems = ev.chats;
+            storageText = ev.size;
+        }
+    }
+
+    function refreshHistory() {
+        Proc.runCommand("duxAi.list", ["python3", backend, "list"], out => applyList(out));
+    }
+
+    function openChat(id) {
+        if (busy)
+            return;
+        Proc.runCommand("duxAi.load", ["python3", backend, "load", id], out => {
+            const ev = lastJson(out);
+            if (ev?.type !== "chat")
+                return;
+            messages.clear();
+            for (const m of ev.chat.messages)
+                messages.append({ role: m.role, text: m.text || "", image: m.image || "", isError: false });
+            chatId = ev.chat.id;
+            chatTitle = ev.chat.title;
+            view = "chat";
+            scrollToEnd();
+        });
+    }
+
+    function deleteChat(id) {
+        if (id === chatId)
+            newChat();
+        Proc.runCommand("duxAi.delete", ["python3", backend, "delete", id], out => applyList(out));
+    }
+
+    function deleteAll() {
+        newChat();
+        confirmDeleteAll = false;
+        Proc.runCommand("duxAi.delete", ["python3", backend, "delete", "all"], out => applyList(out));
+    }
+
+    // Optional custom logo: put an SVG at DuxAI/assets/logo.svg
+    readonly property string logoPath: decodeURIComponent(String(Qt.resolvedUrl("assets/logo.svg")).replace("file://", ""))
+    property bool hasLogo: false
+
+    Component.onCompleted: {
+        refreshHistory();
+        Proc.runCommand("duxAi.logo", ["test", "-s", logoPath], (out, code) => hasLogo = code === 0);
+    }
+
+    // ------------------------------------------------------------ bar pill --
+    // Just a round circle. Drop an SVG at assets/logo.svg to use your own
+    // logo; otherwise a sparkle icon is shown.
+    Component {
+        id: pillComponent
+
+        Item {
+            implicitWidth: root.iconSize + 6
+            implicitHeight: root.iconSize + 6
+
+            Rectangle {
+                id: circle
+                anchors.centerIn: parent
+                width: parent.implicitWidth
+                height: width
+                radius: width / 2
+                color: root.accent
+
+                Image {
+                    id: logo
+                    anchors.fill: parent
+                    anchors.margins: parent.width * 0.18
+                    source: root.hasLogo ? "file://" + root.logoPath : ""
+                    sourceSize: Qt.size(width * 2, height * 2)
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                    visible: status === Image.Ready
+                }
+                DIcon {
+                    anchors.centerIn: parent
+                    visible: logo.status !== Image.Ready
+                    name: "auto_awesome"
+                    size: parent.width * 0.62
+                    filled: true
+                    color: "white"
+                }
+
+                // Gentle pulse while Claude is answering.
+                SequentialAnimation on opacity {
+                    running: root.busy
+                    loops: Animation.Infinite
+                    onStopped: circle.opacity = 1
+                    NumberAnimation { to: 0.45; duration: 600; easing.type: Easing.InOutQuad }
+                    NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutQuad }
+                }
+            }
+        }
+    }
+
+    horizontalBarPill: pillComponent
+    verticalBarPill: pillComponent
+    pillRightClickAction: () => root.startCapture()   // right-click = ask about screen
+
+    // -------------------------------------------------------------- popout --
+    popoutContent: Component {
+        Item {
+            id: win
+            implicitHeight: root.popoutHeight - 40
+            width: parent ? parent.width : root.popoutWidth
+
+            Connections {
+                target: root
+                function onFocusInput() {
+                    if (root.view === "chat")
+                        input.forceActiveFocus();
+                }
+                function onScrollToEnd() {
+                    Qt.callLater(() => chatList.positionViewAtEnd());
+                }
+                function onInteractionActiveChanged() {
+                    if (root.interactionActive)
+                        focusTimer.restart();
+                }
+            }
+            Component.onCompleted: focusTimer.restart()
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: Theme.spacingS
+
+                // ---- header ----
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    Rectangle {
+                        Layout.preferredWidth: 26
+                        Layout.preferredHeight: 26
+                        radius: 13
+                        color: root.accent
+                        DIcon {
+                            anchors.centerIn: parent
+                            name: "auto_awesome"
+                            size: 16
+                            filled: true
+                            color: "white"
+                        }
+                    }
+                    StyledText {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: Theme.spacingS
+                        text: root.view === "history" ? "Chats" : (root.chatTitle || "Claude")
+                        font.pixelSize: Theme.fontSizeLarge
+                        font.weight: Font.Medium
+                        color: Theme.onSurface
+                        elide: Text.ElideRight
+                    }
+                    IconBtn {
+                        icon: "screenshot_region"
+                        onClicked: root.startCapture()
+                    }
+                    IconBtn {
+                        icon: "edit_square"
+                        enabled: !root.busy
+                        onClicked: root.newChat()
+                    }
+                    IconBtn {
+                        icon: "history"
+                        active: root.view === "history"
+                        onClicked: {
+                            root.view = root.view === "history" ? "chat" : "history";
+                            root.confirmDeleteAll = false;
+                            if (root.view === "history")
+                                root.refreshHistory();
+                        }
+                    }
+                }
+
+                // ---- chat view ----
+                Item {
+                    visible: root.view === "chat"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    // Empty state
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: Theme.spacingS
+                        visible: messages.count === 0
+
+                        DIcon {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            name: "auto_awesome"
+                            size: 40
+                            filled: true
+                            color: root.accent
+                        }
+                        StyledText {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: "How can I help?"
+                            font.pixelSize: Theme.fontSizeLarge
+                            color: Theme.onSurface
+                        }
+                        StyledText {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: win.width - 60
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: "Tip: right-click the bar icon or press your shortcut to select something on screen and ask about it."
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.onSurfaceVariant
+                        }
+                    }
+
+                    ListView {
+                        id: chatList
+                        anchors.fill: parent
+                        clip: true
+                        spacing: Theme.spacingM
+                        model: messages
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
+
+                        delegate: Item {
+                            id: msg
+                            required property int index
+                            required property string role
+                            required property string text
+                            required property string image
+                            required property bool isError
+                            readonly property bool isUser: role === "user"
+                            readonly property bool isLast: index === messages.count - 1
+
+                            width: chatList.width - 8
+                            height: bubble.height + (copyRow.visible ? copyRow.height : 0)
+
+                            Rectangle {
+                                id: bubble
+                                anchors.right: msg.isUser ? parent.right : undefined
+                                width: msg.isUser ? Math.min(parent.width * 0.85, Math.max(body.implicitWidth, msg.image !== "" ? 240 : 0) + 24) : parent.width
+                                height: content.implicitHeight + (msg.isUser ? 16 : 4)
+                                radius: Theme.cornerRadius * 1.5
+                                color: msg.isUser ? Theme.withAlpha(root.accent, 0.16) : "transparent"
+
+                                Column {
+                                    id: content
+                                    x: msg.isUser ? 12 : 2
+                                    y: msg.isUser ? 8 : 2
+                                    width: bubble.width - (msg.isUser ? 24 : 4)
+                                    spacing: 6
+
+                                    Image {
+                                        id: shot
+                                        visible: msg.image !== ""
+                                        source: msg.image ? "file://" + msg.image : ""
+                                        width: Math.min(240, content.width)
+                                        height: visible ? Math.min(160, implicitHeight * width / Math.max(1, implicitWidth)) : 0
+                                        fillMode: Image.PreserveAspectFit
+                                        horizontalAlignment: Image.AlignLeft
+                                        asynchronous: true
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: Qt.openUrlExternally(shot.source)
+                                        }
+                                    }
+
+                                    // Streaming placeholder
+                                    Row {
+                                        visible: !msg.isUser && msg.text === "" && msg.isLast && root.busy
+                                        spacing: 8
+                                        DSpinner {
+                                            size: 16
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                        StyledText {
+                                            text: root.status || "Thinking…"
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            color: Theme.onSurfaceVariant
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                    }
+
+                                    TextEdit {
+                                        id: body
+                                        visible: msg.text !== ""
+                                        width: msg.isUser ? Math.min(implicitWidth, content.width) : content.width
+                                        text: msg.text
+                                        textFormat: msg.isUser ? TextEdit.PlainText : TextEdit.MarkdownText
+                                        wrapMode: TextEdit.Wrap
+                                        readOnly: true
+                                        selectByMouse: true
+                                        color: msg.isError ? Theme.error : Theme.onSurface
+                                        selectionColor: Theme.withAlpha(Theme.primary, 0.35)
+                                        font.pixelSize: Theme.fontSizeMedium
+                                        onLinkActivated: link => Qt.openUrlExternally(link)
+                                    }
+                                }
+                            }
+
+                            // Copy button under finished assistant answers
+                            Row {
+                                id: copyRow
+                                anchors.top: bubble.bottom
+                                visible: !msg.isUser && !msg.isError && msg.text !== "" && !(msg.isLast && root.busy)
+                                height: 26
+                                IconBtn {
+                                    implicitWidth: 26
+                                    implicitHeight: 26
+                                    iconSize: 15
+                                    icon: "content_copy"
+                                    onClicked: {
+                                        Quickshell.execDetached(["dms", "cl", "copy", msg.text]);
+                                        ToastService.showInfo("Copied answer");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- history view ----
+                Item {
+                    visible: root.view === "history"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    StyledText {
+                        anchors.centerIn: parent
+                        visible: root.historyItems.length === 0
+                        text: "No saved chats yet"
+                        color: Theme.onSurfaceVariant
+                    }
+
+                    ListView {
+                        anchors.fill: parent
+                        anchors.bottomMargin: footer.height + Theme.spacingS
+                        clip: true
+                        spacing: 4
+                        model: root.historyItems
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
+
+                        delegate: Rectangle {
+                            id: row
+                            required property var modelData
+                            width: ListView.view.width - 8
+                            height: 52
+                            radius: Theme.cornerRadius
+                            color: rowMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.07) : (modelData.id === root.chatId ? Theme.withAlpha(root.accent, 0.12) : "transparent")
+
+                            MouseArea {
+                                id: rowMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.openChat(row.modelData.id)
+                            }
+                            Column {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 12
+                                anchors.right: del.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 2
+                                StyledText {
+                                    width: parent.width
+                                    text: row.modelData.title
+                                    elide: Text.ElideRight
+                                    color: Theme.onSurface
+                                    font.pixelSize: Theme.fontSizeMedium
+                                }
+                                StyledText {
+                                    text: Qt.formatDateTime(new Date(row.modelData.updated * 1000), "d MMM yyyy, HH:mm") + "  ·  " + row.modelData.model + "  ·  " + row.modelData.count + " messages"
+                                    color: Theme.onSurfaceVariant
+                                    font.pixelSize: Theme.fontSizeSmall
+                                }
+                            }
+                            IconBtn {
+                                id: del
+                                anchors.right: parent.right
+                                anchors.rightMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                icon: "delete"
+                                iconColor: rowMouse.containsMouse ? Theme.error : Theme.withAlpha(Theme.onSurfaceVariant, 0.6)
+                                onClicked: root.deleteChat(row.modelData.id)
+                            }
+                        }
+                    }
+
+                    // Discrete storage indicator + delete all
+                    RowLayout {
+                        id: footer
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        height: 30
+
+                        DIcon {
+                            name: "storage"
+                            size: 14
+                            color: Theme.onSurfaceVariant
+                        }
+                        StyledText {
+                            Layout.fillWidth: true
+                            text: "Saved chats use " + (root.storageText || "0 B")
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.onSurfaceVariant
+                        }
+                        StyledText {
+                            visible: root.historyItems.length > 0
+                            text: root.confirmDeleteAll ? "Click again to delete all" : "Delete all"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.error
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.confirmDeleteAll ? root.deleteAll() : root.confirmDeleteAll = true
+                            }
+                        }
+                    }
+                }
+
+                // ---- attached screenshot ----
+                Rectangle {
+                    visible: root.view === "chat" && root.pendingImage !== ""
+                    Layout.fillWidth: true
+                    height: 56
+                    radius: Theme.cornerRadius
+                    color: Theme.withAlpha(Theme.onSurface, 0.05)
+
+                    Image {
+                        id: thumb
+                        x: 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 64
+                        height: 44
+                        fillMode: Image.PreserveAspectCrop
+                        source: root.pendingImage ? "file://" + root.pendingImage : ""
+                        asynchronous: true
+                    }
+                    StyledText {
+                        anchors.left: thumb.right
+                        anchors.leftMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Selection attached"
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.onSurfaceVariant
+                    }
+                    IconBtn {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        icon: "close"
+                        onClicked: root.pendingImage = ""
+                    }
+                }
+
+                // ---- input box ----
+                Rectangle {
+                    visible: root.view === "chat"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: inputCol.implicitHeight + 16
+                    radius: Theme.cornerRadius * 2
+                    color: Theme.withAlpha(Theme.onSurface, 0.06)
+                    border.width: input.activeFocus ? 1 : 0
+                    border.color: Theme.withAlpha(root.accent, 0.6)
+
+                    Column {
+                        id: inputCol
+                        x: 10
+                        y: 8
+                        width: parent.width - 20
+                        spacing: 6
+
+                        ScrollView {
+                            width: parent.width
+                            height: Math.min(Math.max(input.implicitHeight, 24), 140)
+
+                            TextArea {
+                                id: input
+                                placeholderText: root.pendingImage ? "Ask about your selection…" : "Ask Claude…"
+                                placeholderTextColor: Theme.onSurfaceVariant
+                                color: Theme.onSurface
+                                font.pixelSize: Theme.fontSizeMedium
+                                wrapMode: TextArea.Wrap
+                                background: null
+                                padding: 0
+                                selectByMouse: true
+
+                                // Enter = send, Shift+Enter = new line
+                                Keys.onPressed: event => {
+                                    if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)) {
+                                        if (root.send(input.text))
+                                            input.text = "";
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            width: parent.width
+                            spacing: 6
+
+                            ChipMenu {
+                                icon: "neurology"
+                                options: root.modelOptions
+                                current: root.model
+                                onPicked: value => root.setModel(value)
+                            }
+                            ChipMenu {
+                                icon: "psychology"
+                                options: root.effortOptions
+                                current: root.effort
+                                onPicked: value => root.setEffort(value)
+                            }
+                            DIcon {
+                                visible: root.allowWeb
+                                name: "travel_explore"
+                                size: 16
+                                color: Theme.onSurfaceVariant
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+
+                            // Send / stop
+                            Rectangle {
+                                Layout.preferredWidth: 32
+                                Layout.preferredHeight: 32
+                                radius: 16
+                                readonly property bool canSend: input.text.trim() !== "" || root.pendingImage !== ""
+                                color: root.busy ? Theme.withAlpha(Theme.onSurface, 0.12) : (canSend ? root.accent : Theme.withAlpha(Theme.onSurface, 0.08))
+                                DIcon {
+                                    anchors.centerIn: parent
+                                    name: root.busy ? "stop" : "arrow_upward"
+                                    size: 18
+                                    filled: true
+                                    color: root.busy ? Theme.onSurface : (parent.canSend ? "white" : Theme.onSurfaceVariant)
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (root.busy)
+                                            root.stop();
+                                        else if (root.send(input.text))
+                                            input.text = "";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
