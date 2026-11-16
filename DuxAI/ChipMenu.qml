@@ -21,7 +21,7 @@ Item {
     }
 
     implicitWidth: row.implicitWidth + 20
-    implicitHeight: 28
+    implicitHeight: 30
 
     Rectangle {
         anchors.fill: parent
@@ -42,7 +42,7 @@ Item {
             }
             StyledText {
                 text: chip.currentLabel
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.fontSizeMedium
                 color: Theme.onSurface
                 anchors.verticalCenter: parent.verticalCenter
             }
@@ -88,7 +88,7 @@ Item {
                 Rectangle {
                     required property var modelData
                     width: menu.width - 8
-                    height: 30
+                    height: 34
                     radius: Theme.cornerRadius
                     color: itemMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.08) : "transparent"
 
@@ -97,7 +97,7 @@ Item {
                         anchors.leftMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
                         text: modelData.label
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.fontSizeMedium
                         color: Theme.onSurface
                     }
                     DIcon {

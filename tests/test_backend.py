@@ -79,6 +79,14 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(content[0]["type"], "image")
         self.assertEqual(content[1]["text"], "What is this?")
 
+    def test_quote_is_wrapped_and_saved(self):
+        done = self.run_backend("ask", "--quote=E = mc^2", "--", "")[-1]
+        text = self.calls()[0]["message"]["message"]["content"][0]["text"]
+        self.assertIn("<selected_text>\nE = mc^2\n</selected_text>", text)
+        chat = json.loads((self.data / "chats" / f"{done['chat']}.json").read_text())
+        self.assertEqual(chat["messages"][0]["quote"], "E = mc^2")
+        self.assertEqual(chat["title"], "E = mc^2")
+
     def test_web_flag_enables_only_web_tools(self):
         self.run_backend("ask", "--web", "--", "news?")
         argv = self.calls()[0]["argv"]

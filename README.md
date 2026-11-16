@@ -19,6 +19,9 @@ subscription**. You don't need an API key.
 - **Ask about your screen:** the camera-frame button, right-click, or
   **Mod+Shift+A** opens a region selector. After you select, the chat opens
   with the screenshot attached.
+- **Ask about selected text:** highlight text anywhere (a PDF, a website, a
+  terminal), then press **Mod+Shift+X** or the quote button in the chat. The
+  text is attached as a quote. Needs `wl-clipboard`.
 - **History page:** open, continue or delete old chats. The bottom of the page
   shows how much disk space saved chats use.
 
@@ -33,8 +36,8 @@ claude            # type /login, choose your Claude subscription, then /exit
 git clone https://github.com/Mateo1844/DUX-AI.git ~/DUX-AI
 cd ~/DUX-AI && ./install.sh
 
-# 3. Optional: shrinks big screenshots so they use fewer tokens
-sudo dnf install python3-pillow
+# 3. wl-clipboard for selected text; Pillow (optional) shrinks big screenshots
+sudo dnf install wl-clipboard python3-pillow
 ```
 
 Then:
@@ -47,6 +50,7 @@ Then:
 
    ```kdl
    Mod+Shift+A hotkey-overlay-title="Ask Claude about screen" { spawn "dms" "ipc" "call" "widget" "openWith" "duxAi" "capture"; }
+   Mod+Shift+X hotkey-overlay-title="Ask Claude about selected text" { spawn "dms" "ipc" "call" "widget" "openWith" "duxAi" "text"; }
    ```
 
    `Mod+A` is already the DMS Control Center, so the shortcut uses
