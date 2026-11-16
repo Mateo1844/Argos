@@ -22,6 +22,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -441,6 +442,29 @@ def cmd_selection(_args):
     return 1
 
 
+def cmd_logo(_args):
+    """Make a white copy of assets/logo.svg so it shows up on the colored circle.
+
+    (The official Claude logo is orange, exactly like the circle behind it.)
+    """
+    src = Path(__file__).resolve().parent.parent / "assets" / "logo.svg"
+    if not src.is_file():
+        emit(type="logo", path="")
+        return 0
+    svg = src.read_text(errors="ignore")
+    svg = re.sub(r'(fill|stroke)="(?!none)[^"]*"', r'\1="#ffffff"', svg)
+    svg = re.sub(r'(fill|stroke)\s*:\s*(?!none)[^;"]+', r'\1:#ffffff', svg)
+    # Root <svg>: drop width/height like "1em" (viewBox is enough) and make
+    # the default fill white for paths that have no fill of their own.
+    svg = re.sub(r'<svg\b([^>]*)>', lambda m: "<svg" + re.sub(r'\s(width|height)="[^"]*"', "", m.group(1))
+                 + ' fill="#ffffff">', svg, count=1)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out = DATA_DIR / "logo-white.svg"
+    out.write_text(svg)
+    emit(type="logo", path=str(out))
+    return 0
+
+
 # ---------------------------------------------------------- list / load ----
 
 def cmd_list(_args):
@@ -497,6 +521,7 @@ def main(argv=None):
     delete.set_defaults(func=cmd_delete)
     sub.add_parser("capture").set_defaults(func=cmd_capture)
     sub.add_parser("selection").set_defaults(func=cmd_selection)
+    sub.add_parser("logo").set_defaults(func=cmd_logo)
 
     args = parser.parse_args(argv)
     return args.func(args)

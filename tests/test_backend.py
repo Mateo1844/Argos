@@ -118,6 +118,17 @@ class BackendTest(unittest.TestCase):
         empty = self.run_backend("delete", "all")[-1]
         self.assertEqual(empty["chats"], [])
 
+    def test_logo_is_made_white(self):
+        ev = self.run_backend("logo")[-1]
+        src = ROOT / "DuxAI" / "assets" / "logo.svg"
+        if not src.exists():
+            self.assertEqual(ev["path"], "")
+            return
+        svg = Path(ev["path"]).read_text()
+        self.assertNotIn("#D97757", svg)
+        self.assertIn('fill="#ffffff"', svg)
+        self.assertNotIn('width="1em"', svg)
+
     def test_missing_claude(self):
         env = dict(self.env, PATH="/usr/bin:/bin")
         events = self.run_backend("ask", "--", "hi", env=env)
