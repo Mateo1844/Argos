@@ -1,0 +1,18 @@
+{
+    "id": "duxAi",
+    "name": "DUX-AI",
+    "description": "Claude in your top bar: chat, pick model and thinking level, or select part of the screen and ask about it.",
+    "version": "0.1.0",
+    "author": "Mateo1844",
+    "type": "widget",
+    "capabilities": ["dankbar-widget", "ai-assistant", "screenshot"],
+    "component": "./DuxAIWidget.qml",
+    "icon": "auto_awesome",
+    "settings": "./DuxAISettings.qml",
+    "requires_dms": ">=1.7.0",
+    "requires": ["python3", "claude"],
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
+}
