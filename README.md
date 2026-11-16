@@ -70,7 +70,7 @@ To update later: `cd ~/DUX-AI && git pull && dms ipc call plugins reload duxAi`.
         └──── one JSON object per line ◀────┘   chats saved in ~/.local/share/dux-ai/
 ```
 
-- `DuxAI/DuxAIWidget.qml` is the UI only: the bar button, chat, history and
+- `DuxAI/DuxAIWidget.qml` is the UI only (one file, so `plugins reload` always picks up changes): the bar button, chat, history and
   pickers.
 - `DuxAI/backend/duxai.py` is plain Python with no required packages. It
   starts `claude`, streams the answer back, and saves, lists and deletes

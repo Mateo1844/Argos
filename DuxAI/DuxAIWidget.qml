@@ -20,6 +20,162 @@ PluginComponent {
     popoutWidth: 460
     popoutHeight: 600
 
+    // Small round icon button.
+    component IconBtn: Rectangle {
+        id: btn
+
+        property string icon: ""
+        property bool active: false
+        property bool filled: false
+        property int iconSize: 18
+        property color iconColor: Theme.onSurfaceVariant
+        signal clicked
+
+        implicitWidth: 32
+        implicitHeight: 32
+        radius: width / 2
+        color: active ? Theme.withAlpha(Theme.primary, 0.18) : (mouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.08) : "transparent")
+        opacity: enabled ? 1 : 0.4
+
+        DIcon {
+            anchors.centerIn: parent
+            name: btn.icon
+            size: btn.iconSize
+            filled: btn.filled
+            color: btn.active ? Theme.primary : btn.iconColor
+        }
+
+        MouseArea {
+            id: mouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: btn.clicked()
+        }
+    }
+
+    // Rounded chip that opens a list of choices above itself (model / thinking pickers).
+    component ChipMenu: Item {
+        id: chip
+
+        property string icon: ""
+        property var options: []      // [{ value: "sonnet", label: "Sonnet" }, ...]
+        property string current: ""
+        property bool open: false
+        signal picked(string value)
+
+        readonly property string currentLabel: {
+            for (const o of options)
+                if (o.value === current)
+                    return o.label;
+            return current;
+        }
+
+        implicitWidth: row.implicitWidth + 20
+        implicitHeight: 30
+
+        Rectangle {
+            anchors.fill: parent
+            radius: height / 2
+            color: mouse.containsMouse || chip.open ? Theme.withAlpha(Theme.onSurface, 0.12) : Theme.withAlpha(Theme.onSurface, 0.06)
+
+            Row {
+                id: row
+                anchors.centerIn: parent
+                spacing: 4
+
+                DIcon {
+                    visible: chip.icon !== ""
+                    name: chip.icon
+                    size: 14
+                    color: Theme.onSurfaceVariant
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                StyledText {
+                    text: chip.currentLabel
+                    font.pixelSize: Theme.fontSizeMedium
+                    color: Theme.onSurface
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                DIcon {
+                    name: chip.open ? "expand_more" : "expand_less"
+                    size: 14
+                    color: Theme.onSurfaceVariant
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+
+            MouseArea {
+                id: mouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: chip.open = !chip.open
+            }
+        }
+
+        // The menu opens upwards because the chips sit at the bottom of the window.
+        Rectangle {
+            id: menu
+            visible: chip.open
+            z: 1000
+            anchors.bottom: parent.top
+            anchors.bottomMargin: 6
+            width: Math.max(150, list.implicitWidth + 8)
+            height: list.implicitHeight + 8
+            radius: Theme.cornerRadius
+            color: Theme.surfaceContainerHigh
+            border.color: Theme.outlineVariant
+            border.width: 1
+
+            Column {
+                id: list
+                x: 4
+                y: 4
+
+                Repeater {
+                    model: chip.options
+
+                    Rectangle {
+                        required property var modelData
+                        width: menu.width - 8
+                        height: 34
+                        radius: Theme.cornerRadius
+                        color: itemMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.08) : "transparent"
+
+                        StyledText {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.label
+                            font.pixelSize: Theme.fontSizeMedium
+                            color: Theme.onSurface
+                        }
+                        DIcon {
+                            visible: modelData.value === chip.current
+                            anchors.right: parent.right
+                            anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: "check"
+                            size: 16
+                            color: Theme.primary
+                        }
+                        MouseArea {
+                            id: itemMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                chip.open = false;
+                                chip.picked(modelData.value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Round colored circle with the logo inside (bar, chat header, empty
     // screen). Shows a white copy of assets/logo.svg if it exists, otherwise
     // a sparkle icon. (Inline component: no extra file for QML to find.)
