@@ -30,6 +30,7 @@ PluginComponent {
         property color accent: "#D97757"
         property string logoPath: ""
         property bool hasLogo: false
+        property real logoScale: 0.62
 
         width: size
         height: size
@@ -39,7 +40,7 @@ PluginComponent {
         Image {
             id: logo
             anchors.centerIn: parent
-            width: circle.size * 0.62
+            width: circle.size * circle.logoScale
             height: width
             source: circle.hasLogo ? "file://" + circle.logoPath : ""
             sourceSize: Qt.size(128, 128)
@@ -51,7 +52,7 @@ PluginComponent {
             anchors.centerIn: parent
             visible: logo.status !== Image.Ready
             name: "auto_awesome"
-            size: circle.size * 0.62
+            size: circle.size * circle.logoScale
             filled: true
             color: "white"
         }
@@ -68,6 +69,8 @@ PluginComponent {
     readonly property string extraInstructions: pluginData.extraInstructions || ""
     readonly property bool useThemeColor: pluginData.pillColor === "theme"
     readonly property color accent: useThemeColor ? Theme.primary : "#D97757"
+    readonly property bool pillTransparent: pluginData.pillColor === "transparent"
+    readonly property bool showBorder: pluginData.showBorder ?? true
 
     readonly property var modelOptions: (pluginData.models || "sonnet,opus,haiku").split(",").map(s => s.trim()).filter(s => s.length > 0).map(s => ({
                 value: s,
@@ -378,7 +381,8 @@ PluginComponent {
                 id: circle
                 anchors.centerIn: parent
                 size: parent.implicitWidth
-                accent: root.accent
+                accent: root.pillTransparent ? "transparent" : root.accent
+                logoScale: root.pillTransparent ? 0.9 : 0.62
                 logoPath: root.logoPath
                 hasLogo: root.hasLogo
 
@@ -421,6 +425,18 @@ PluginComponent {
             }
             Component.onCompleted: focusTimer.restart()
 
+            // Thin outline along the edge of the popout (Settings: "Window border").
+            Rectangle {
+                visible: root.showBorder
+                anchors.fill: parent
+                anchors.margins: -PopoutMetrics.contentPadding
+                radius: Theme.windowRadius
+                color: "transparent"
+                border.width: 1
+                border.color: Theme.withAlpha(root.accent, 0.45)
+                z: 100
+            }
+
             ColumnLayout {
                 anchors.fill: parent
                 spacing: Theme.spacingS
@@ -453,6 +469,7 @@ PluginComponent {
                     }
                     IconBtn {
                         icon: "format_quote"
+                        filled: true
                         onClicked: root.grabSelection()
                     }
                     IconBtn {
@@ -484,13 +501,6 @@ PluginComponent {
                         spacing: Theme.spacingS
                         visible: messages.count === 0
 
-                        LogoCircle {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            size: 48
-                            accent: root.accent
-                            logoPath: root.logoPath
-                            hasLogo: root.hasLogo
-                        }
                         StyledText {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: "How can I help?"
@@ -819,6 +829,7 @@ PluginComponent {
                         anchors.verticalCenter: parent.verticalCenter
                         name: "format_quote"
                         size: 22
+                        filled: true
                         color: root.accent
                     }
                     StyledText {
