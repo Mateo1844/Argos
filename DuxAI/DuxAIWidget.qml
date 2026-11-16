@@ -507,7 +507,7 @@ PluginComponent {
                             Rectangle {
                                 id: bubble
                                 anchors.right: msg.isUser ? parent.right : undefined
-                                width: msg.isUser ? Math.min(parent.width * 0.85, Math.max(body.implicitWidth, msg.image !== "" || msg.quote !== "" ? 240 : 0) + 24) : parent.width
+                                width: msg.isUser ? Math.min(parent.width * 0.85, Math.max(body.implicitWidth, msg.quote !== "" ? 240 : (msg.image !== "" ? 130 : 0)) + 24) : parent.width
                                 height: content.implicitHeight + (msg.isUser ? 16 : 4)
                                 radius: Theme.cornerRadius * 1.5
                                 color: msg.isUser ? Theme.withAlpha(root.accent, 0.16) : "transparent"
@@ -519,19 +519,41 @@ PluginComponent {
                                     width: bubble.width - (msg.isUser ? 24 : 4)
                                     spacing: 6
 
-                                    Image {
+                                    // Compact screenshot chip (click to open full size)
+                                    Rectangle {
                                         id: shot
                                         visible: msg.image !== ""
-                                        source: msg.image ? "file://" + msg.image : ""
-                                        width: Math.min(240, content.width)
-                                        height: visible ? Math.min(160, implicitHeight * width / Math.max(1, implicitWidth)) : 0
-                                        fillMode: Image.PreserveAspectFit
-                                        horizontalAlignment: Image.AlignLeft
-                                        asynchronous: true
+                                        width: shotRow.implicitWidth + 12
+                                        height: visible ? 32 : 0
+                                        radius: Theme.cornerRadius
+                                        color: shotMouse.containsMouse ? Theme.withAlpha(Theme.onSurface, 0.12) : Theme.withAlpha(Theme.onSurface, 0.06)
+
+                                        Row {
+                                            id: shotRow
+                                            x: 4
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            spacing: 8
+                                            Image {
+                                                width: 36
+                                                height: 24
+                                                source: msg.image ? "file://" + msg.image : ""
+                                                sourceSize: Qt.size(72, 48)
+                                                fillMode: Image.PreserveAspectCrop
+                                                asynchronous: true
+                                            }
+                                            StyledText {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: "Screenshot"
+                                                font.pixelSize: root.fsSmall
+                                                color: Theme.onSurfaceVariant
+                                            }
+                                        }
                                         MouseArea {
+                                            id: shotMouse
                                             anchors.fill: parent
+                                            hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
-                                            onClicked: Qt.openUrlExternally(shot.source)
+                                            onClicked: Qt.openUrlExternally("file://" + msg.image)
                                         }
                                     }
 
@@ -724,7 +746,7 @@ PluginComponent {
                 Rectangle {
                     visible: root.view === "chat" && root.pendingImage !== ""
                     Layout.fillWidth: true
-                    height: 56
+                    Layout.preferredHeight: 40
                     radius: Theme.cornerRadius
                     color: Theme.withAlpha(Theme.onSurface, 0.05)
 
@@ -732,8 +754,9 @@ PluginComponent {
                         id: thumb
                         x: 6
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 64
-                        height: 44
+                        width: 40
+                        height: 28
+                        sourceSize: Qt.size(80, 56)
                         fillMode: Image.PreserveAspectCrop
                         source: root.pendingImage ? "file://" + root.pendingImage : ""
                         asynchronous: true
@@ -742,7 +765,7 @@ PluginComponent {
                         anchors.left: thumb.right
                         anchors.leftMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
-                        text: "Selection attached"
+                        text: "Screenshot attached"
                         font.pixelSize: root.fsSmall
                         color: Theme.onSurfaceVariant
                     }
