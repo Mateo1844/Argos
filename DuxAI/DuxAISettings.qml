@@ -87,12 +87,20 @@ PluginSettings {
 
     SelectionSetting {
         settingKey: "pillColor"
-        label: "Bar icon color"
+        label: "Bar icon background"
         options: [
             { label: "Claude orange", value: "claude" },
-            { label: "Theme accent", value: "theme" }
+            { label: "Theme accent", value: "theme" },
+            { label: "Transparent (logo only)", value: "transparent" }
         ]
         defaultValue: "claude"
+    }
+
+    ToggleSetting {
+        settingKey: "showBorder"
+        label: "Window border"
+        description: "Thin outline around the chat window so you can see where it ends."
+        defaultValue: true
     }
 
     StyledText {

@@ -8,6 +8,7 @@ Rectangle {
 
     property string icon: ""
     property bool active: false
+    property bool filled: false
     property int iconSize: 18
     property color iconColor: Theme.onSurfaceVariant
     signal clicked
@@ -22,6 +23,7 @@ Rectangle {
         anchors.centerIn: parent
         name: btn.icon
         size: btn.iconSize
+        filled: btn.filled
         color: btn.active ? Theme.primary : btn.iconColor
     }
 

@@ -113,7 +113,8 @@ In DMS Settings → Plugins → DUX-AI you can set:
 - web search on or off
 - screenshot size limit
 - extra instructions (for example "Answer in Dutch")
-- bar icon color
+- bar icon background: Claude orange, theme color, or transparent (logo only)
+- window border on/off
 
 **Bar icon:** to use a logo (for example the official Claude logo), save it as
 `DuxAI/assets/logo.svg`. It is shown in white inside the circle, in the bar
