@@ -486,6 +486,16 @@ PluginComponent {
         return text.length > 48 ? text.slice(0, 48) + "…" : (text || "Screenshot");
     }
 
+    // One small Haiku call per chat (~100-300 tokens); the first-sentence title stays if it fails.
+    function requestTitle(id) {
+        Proc.runCommand("duxAi.title", ["python3", backend, "title", id], out => {
+            const ev = lastJson(out);
+            if (ev?.type === "title" && ev.title && chatId === ev.chat)
+                chatTitle = ev.title;
+            refreshHistory();
+        });
+    }
+
     function send(text) {
         text = text.trim();
         if (busy || (!text && !pendingImage && !pendingQuote))
@@ -595,6 +605,8 @@ PluginComponent {
                 tokens = ev.tokens;
             setLastText(ev.text, false);
             scrollToEnd();
+            if (ev.chat && !ev.stopped && messages.count === 2)
+                requestTitle(ev.chat);   // first answer finished: ask Haiku for a short title
             break;
         case "error":
             gotFinal = true;

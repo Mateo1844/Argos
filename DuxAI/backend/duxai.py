@@ -809,6 +809,47 @@ def cmd_load(args):
     return 0
 
 
+TITLE_PROMPT = ("Write a title of 3 to 6 words for this chat. Reply with only the title: "
+                "no quotes, no period, same language as the user.")
+
+
+def cmd_title(args):
+    """Give a chat a short title written by Haiku (one tiny call, once per chat).
+
+    Costs roughly 100-300 tokens. On any failure the first-sentence title stays.
+    """
+    chat = load_chat(args.id)
+    msgs = (chat or {}).get("messages", [])
+    if not chat or chat.get("auto_title") or len(msgs) < 2:
+        emit(type="title", chat=args.id, title=(chat or {}).get("title", ""))
+        return 0
+    claude = find_claude()
+    first_user = (msgs[0].get("text") or msgs[0].get("quote") or "Screenshot")[:300]
+    first_answer = (msgs[1].get("text") or "")[:300]
+    title = ""
+    if claude:
+        cmd = [claude, "-p", "--model", "haiku", "--system-prompt", TITLE_PROMPT]
+        flags = supported_flags(claude)
+        if "--tools" in flags:
+            cmd += ["--tools", ""]
+        cmd += [f for f in LEAN_FLAGS if f in flags]
+        WORK_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            out = subprocess.run(cmd, cwd=WORK_DIR, input=f"User: {first_user}\n\nAnswer: {first_answer}",
+                                 capture_output=True, text=True, timeout=45)
+            if out.returncode == 0:
+                title = " ".join(out.stdout.split()).strip("\"'`. ")[:60]
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if title:
+        chat = load_chat(args.id) or chat   # re-read: the chat may have grown meanwhile
+        chat["title"] = title
+        chat["auto_title"] = True
+        save_chat(chat)
+    emit(type="title", chat=args.id, title=title or chat.get("title", ""))
+    return 0
+
+
 def cmd_delete(args):
     chats = all_chats() if args.id == "all" else [c for c in [load_chat(args.id)] if c]
     for chat in chats:
@@ -847,6 +888,9 @@ def main(argv=None):
     load = sub.add_parser("load")
     load.add_argument("id")
     load.set_defaults(func=cmd_load)
+    title = sub.add_parser("title", help="generate a short title for a chat")
+    title.add_argument("id")
+    title.set_defaults(func=cmd_title)
     delete = sub.add_parser("delete")
     delete.add_argument("id", help='chat id or "all"')
     delete.set_defaults(func=cmd_delete)
