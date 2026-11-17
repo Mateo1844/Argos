@@ -21,14 +21,23 @@ Window {
         toast.isError = isError;
         toast.actionLabel = actionLabel || "";
         toast.actionKey = actionKey || "";
+        toast.area = dux.workArea();
         Qt.callLater(() => {
-            const a = dux.workArea();
-            toast.x = a.x + a.width - toast.width - 12;
-            toast.y = a.y + a.height - toast.height - 12;
+            toast.place();
             toast.visible = true;
+            Qt.callLater(toast.place);
             hideTimer.restart();
         });
     }
+
+    // Bottom-right, just above the taskbar. Placed again (a moment later) when
+    // its height changes: Windows lays the text out after it appears.
+    property rect area: Qt.rect(0, 0, 1920, 1040)
+    function place() {
+        toast.x = area.x + area.width - toast.width - 12;
+        toast.y = area.y + area.height - toast.height - 12;
+    }
+    onHeightChanged: Qt.callLater(place)
 
     transientParent: null
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus

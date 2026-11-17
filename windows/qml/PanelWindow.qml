@@ -42,11 +42,27 @@ Window {
     color: "transparent"
     width: fillWidth ? area.width - margins.left - margins.right : implicitWidth
     height: fillHeight ? area.height - margins.top - margins.bottom : implicitHeight
-    // Placed by anchors + margins, and always kept inside the work area.
-    x: Math.min(Math.max(anchors.left || !anchors.right ? area.x + margins.left
-                                                         : area.x + area.width - width - margins.right,
-                         area.x), area.x + area.width - width)
-    y: Math.min(Math.max(anchors.top || !anchors.bottom ? area.y + margins.top
-                                                         : area.y + area.height - height - margins.bottom,
-                         area.y), area.y + area.height - height)
+    // Placed by anchors + margins, and always kept inside the work area. Not a
+    // binding: when the window resizes, Windows keeps the old position, so it's
+    // placed again on every change (and once more a moment after a resize).
+    function place() {
+        x = Math.min(Math.max(anchors.left || !anchors.right ? area.x + margins.left
+                                                            : area.x + area.width - width - margins.right,
+                              area.x), area.x + area.width - width);
+        y = Math.min(Math.max(anchors.top || !anchors.bottom ? area.y + margins.top
+                                                            : area.y + area.height - height - margins.bottom,
+                              area.y), area.y + area.height - height);
+    }
+    Component.onCompleted: place()
+    onAreaChanged: place()
+    onVisibleChanged: if (visible) place()
+    onWidthChanged: { place(); Qt.callLater(place); }
+    onHeightChanged: { place(); Qt.callLater(place); }
+    Connections {
+        target: panel.margins
+        function onLeftChanged() { panel.place(); }
+        function onRightChanged() { panel.place(); }
+        function onTopChanged() { panel.place(); }
+        function onBottomChanged() { panel.place(); }
+    }
 }
