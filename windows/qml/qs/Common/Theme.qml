@@ -1,21 +1,22 @@
-// Windows stand-in for DMS's Theme: a fixed dark Material-style palette.
+// Windows stand-in for DMS's Theme: Claude's dark colours (warm greys, orange accent).
 pragma Singleton
 import QtQuick
 
 QtObject {
-    property color primary: "#D0BCFF"
-    property color error: "#F2B8B5"
-    property color surface: "#1C1B1F"
-    property color surfaceContainer: "#211F26"
-    property color surfaceContainerHigh: "#2B2930"
-    property color surfaceContainerHighest: "#36343B"
+    property color primary: "#D97757"      // Claude orange
+    readonly property color systemAccent: dux.systemAccent   // Windows' own accent colour
+    property color error: "#E8806E"
+    property color surface: "#1F1E1D"
+    property color surfaceContainer: "#262624"
+    property color surfaceContainerHigh: "#30302E"
+    property color surfaceContainerHighest: "#3A3A37"
     property color onSurface
     property color onSurfaceVariant
-    property color outlineVariant: "#49454F"
+    property color outlineVariant: "#44433E"
     // ("on..." names are set here: in a QtObject they'd look like signal handlers)
     Component.onCompleted: {
-        onSurface = "#E6E1E5";
-        onSurfaceVariant = "#CAC4D0";
+        onSurface = "#F5F4EF";
+        onSurfaceVariant = "#B8B5A9";
     }
 
     property real fontSizeSmall: 12

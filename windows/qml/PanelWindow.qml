@@ -28,7 +28,11 @@ Window {
 
     property var mask: null      // "mask: Region {}" = clicks go through the window
 
-    readonly property rect area: dux.primaryWorkArea()   // main screen without the taskbar
+    // The screen it should be on (like Quickshell's "screen:"). Windows puts a
+    // window on whatever monitor its x/y fall on, so it is placed in that
+    // screen's work area (without the taskbar).
+    property var screen: null
+    readonly property rect area: dux.workAreaOf(screen ? screen.name : "")
     readonly property bool fillWidth: anchors.left && anchors.right
     readonly property bool fillHeight: anchors.top && anchors.bottom
 

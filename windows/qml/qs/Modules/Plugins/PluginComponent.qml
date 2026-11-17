@@ -64,7 +64,8 @@ Item {
 
     // (Not called "openPopout": DuxAIWidget.qml has its own function with that name.)
     function showPopup() {
-        const area = dux.workArea();
+        const area = popupAnchor ? dux.workAreaAt(popupAnchor.x + popupAnchor.size / 2, popupAnchor.y + popupAnchor.size / 2)
+                                 : dux.workArea();
         if (popupAnchor) {
             // Next to the bubble: above it if there's room, otherwise below; inside the screen.
             const a = popupAnchor;

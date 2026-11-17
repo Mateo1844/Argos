@@ -264,7 +264,8 @@ PluginComponent {
             anchors.centerIn: parent
             anchors.verticalCenterOffset: -1
             size: face.hovered ? 46 : 44
-            accent: root.accent
+            accent: root.pillTransparent ? "transparent" : root.accent   // same style as the bar icon
+            logoScale: root.pillTransparent ? 0.75 : 0.62
             logoPath: root.logoPath
             hasLogo: root.hasLogo
             Behavior on size {
@@ -351,12 +352,33 @@ PluginComponent {
     property real bubbleRight: pluginData.bubbleRight ?? 24      // distance to the right screen edge
     property real bubbleBottom: pluginData.bubbleBottom ?? 96    // distance to the bottom screen edge
     readonly property int bubbleSize: 56
-    // Keep the bubble on the screen (also fixes a saved position that's off-screen).
+    // Which monitor the bubble is on (by name; drag it to another monitor to move it there).
+    property string bubbleScreenName: pluginData.bubbleScreen ?? ""
+    readonly property var allScreens: (root.onWindows ? Qt.application.screens : Quickshell.screens) ?? []
+    readonly property var bubbleScreen: {
+        for (const s of allScreens)
+            if (s.name === bubbleScreenName)
+                return s;
+        return root.parentScreen;    // not set yet, or that monitor is unplugged
+    }
+    // Position + size of a screen on the whole desktop (Quickshell: x/y, Qt: virtualX/virtualY).
+    function screenRect(s) {
+        return { x: s?.x ?? s?.virtualX ?? 0, y: s?.y ?? s?.virtualY ?? 0, w: s?.width ?? 1920, h: s?.height ?? 1080 };
+    }
+    function screenAt(x, y) {
+        for (const s of allScreens) {
+            const r = screenRect(s);
+            if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h)
+                return s;
+        }
+        return null;
+    }
+    // Keep the bubble on its screen (also fixes a saved position that's off-screen).
     function clampRight(v) {
-        return Math.min(Math.max(v, 0), (root.parentScreen?.width ?? 1920) - bubbleSize);
+        return Math.min(Math.max(v, 0), screenRect(bubbleScreen).w - bubbleSize);
     }
     function clampBottom(v) {
-        return Math.min(Math.max(v, 0), (root.parentScreen?.height ?? 1080) - bubbleSize);
+        return Math.min(Math.max(v, 0), screenRect(bubbleScreen).h - bubbleSize);
     }
 
     function setQuick(key, value) {
@@ -377,7 +399,8 @@ PluginComponent {
     readonly property string askFolders: pluginData.askFolders || ""
     readonly property string denyFolders: pluginData.denyFolders || ""
     readonly property bool useThemeColor: pluginData.pillColor === "theme"
-    readonly property color accent: useThemeColor ? Theme.primary : "#D97757"
+    // "Theme accent": DMS's theme colour, or Windows' accent colour.
+    readonly property color accent: useThemeColor ? (Theme.systemAccent ?? Theme.primary) : "#D97757"
     readonly property bool pillTransparent: pluginData.pillColor === "transparent"
     readonly property bool showBorder: pluginData.showBorder ?? true
 
@@ -961,7 +984,7 @@ PluginComponent {
     PanelWindow {
         id: bubble
         visible: root.floatingBubble && !root.hidingForScreenshot
-        screen: root.parentScreen ?? null
+        screen: root.bubbleScreen ?? null
         color: "transparent"
         anchors { bottom: true; right: true }
         margins { bottom: root.clampBottom(root.bubbleBottom); right: root.clampRight(root.bubbleRight) }
@@ -1006,15 +1029,33 @@ PluginComponent {
                 if (!dragged && Math.abs(dx) + Math.abs(dy) < 4)
                     return;
                 dragged = true;
+                lastDx = dx;
+                lastDy = dy;
                 // The bubble doesn't move during the drag, so this is exact.
                 targetRight = root.clampRight(startRight - dx);
                 targetBottom = root.clampBottom(startBottom - dy);
             }
+            property real lastDx: 0
+            property real lastDy: 0
+
             function finishDrag() {
-                root.bubbleRight = targetRight;
-                root.bubbleBottom = targetBottom;
-                pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(targetRight));
-                pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(targetBottom));
+                // Where did it land on the whole desktop? Maybe on another monitor.
+                const from = root.screenRect(root.bubbleScreen);
+                const x = from.x + from.w - startRight - root.bubbleSize + lastDx;
+                const y = from.y + from.h - startBottom - root.bubbleSize + lastDy;
+                const target = root.screenAt(x + root.bubbleSize / 2, y + root.bubbleSize / 2);
+                if (target && target.name !== root.bubbleScreen?.name) {
+                    const to = root.screenRect(target);
+                    root.bubbleScreenName = target.name;
+                    root.bubbleRight = Math.min(Math.max(to.x + to.w - x - root.bubbleSize, 0), to.w - root.bubbleSize);
+                    root.bubbleBottom = Math.min(Math.max(to.y + to.h - y - root.bubbleSize, 0), to.h - root.bubbleSize);
+                    pluginService?.savePluginData("duxAi", "bubbleScreen", target.name);
+                } else {
+                    root.bubbleRight = targetRight;
+                    root.bubbleBottom = targetBottom;
+                }
+                pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(root.bubbleRight));
+                pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(root.bubbleBottom));
                 dragged = false;
             }
             // If the system takes the mouse away mid-drag, still put the bubble where it was.
@@ -1042,15 +1083,15 @@ PluginComponent {
     PanelWindow {
         id: bubbleChat
         visible: root.bubbleChatOpen && !root.onWindows
-        screen: root.parentScreen ?? null
+        screen: root.bubbleScreen ?? null
         color: "transparent"
         anchors { bottom: true; right: true }
         readonly property real pad: PopoutMetrics.contentPadding
         readonly property real chatHeight: (chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad
         readonly property real bubbleTop: bubble.margins.bottom + root.bubbleSize   // distance from the screen bottom
-        readonly property bool roomAbove: bubbleTop + 8 + chatHeight <= (root.parentScreen?.height ?? 1080)
+        readonly property bool roomAbove: bubbleTop + 8 + chatHeight <= root.screenRect(root.bubbleScreen).h
         margins {
-            right: Math.min(bubble.margins.right, Math.max(0, (root.parentScreen?.width ?? 1920) - root.popoutWidth))
+            right: Math.min(bubble.margins.right, Math.max(0, root.screenRect(root.bubbleScreen).w - root.popoutWidth))
             bottom: bubbleChat.roomAbove ? bubbleChat.bubbleTop + 8 : Math.max(0, bubble.margins.bottom - bubbleChat.chatHeight - 8)
         }
         implicitWidth: root.popoutWidth
@@ -1085,7 +1126,7 @@ PluginComponent {
     PanelWindow {
         id: dragLayer
         visible: root.floatingBubble
-        screen: root.parentScreen ?? null
+        screen: root.bubbleScreen ?? null
         color: "transparent"
         anchors { top: true; bottom: true; left: true; right: true }
         exclusionMode: ExclusionMode.Ignore

@@ -25,23 +25,10 @@ Window {
             width: scroll.availableWidth
             spacing: 18
 
-            // Header: logo + name
-            Row {
-                spacing: 12
-                Image {
-                    width: 44
-                    height: 44
-                    source: dux.argosLogoUrl
-                    sourceSize: Qt.size(88, 88)
-                    smooth: true
-                    mipmap: true
-                }
-                StyledText {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Settings"
-                    font.pixelSize: Theme.fontSizeLarge + 6
-                    font.weight: Font.Bold
-                }
+            StyledText {
+                text: "Settings"
+                font.pixelSize: Theme.fontSizeLarge + 6
+                font.weight: Font.Bold
             }
 
             Loader {

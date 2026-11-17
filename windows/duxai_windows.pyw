@@ -153,6 +153,19 @@ class Bridge(QObject):
         return chr(code) if code else ""
 
     iconFont = Property(str, lambda self: self._icon_font, constant=True)
+
+    def _system_accent(self):
+        """Windows' accent colour (Settings > Personalisation > Colours)."""
+        try:
+            from PySide6.QtGui import QPalette
+            colour = QGuiApplication.palette().color(QPalette.Accent)
+            if colour.isValid() and colour.alpha() > 0:
+                return colour.name()
+        except Exception:  # noqa: BLE001 - older Qt
+            pass
+        return ACCENT
+
+    systemAccent = Property(str, _system_accent, constant=True)
     textFont = Property(str, lambda self: "Segoe UI" if IS_WINDOWS else "", constant=True)
 
     # --- popup helpers ---
@@ -164,6 +177,20 @@ class Bridge(QObject):
     @Slot(result=QRect)
     def primaryWorkArea(self):
         """Usable area (without taskbar) of the main screen."""
+        return QGuiApplication.primaryScreen().availableGeometry()
+
+    @Slot(int, int, result=QRect)
+    def workAreaAt(self, x, y):
+        """Usable area of the screen that contains this point."""
+        screen = QGuiApplication.screenAt(QPoint(x, y)) or QGuiApplication.primaryScreen()
+        return screen.availableGeometry()
+
+    @Slot(str, result=QRect)
+    def workAreaOf(self, screen_name):
+        """Usable area (without taskbar) of the screen with this name (or the main screen)."""
+        for screen in QGuiApplication.screens():
+            if screen.name() == screen_name:
+                return screen.availableGeometry()
         return QGuiApplication.primaryScreen().availableGeometry()
 
     @Slot(result=QRect)
@@ -403,19 +430,31 @@ class RegionOverlay(QWidget):
 
 # ================================================================= tray ==
 
+def icon_style(bridge):
+    """The "Bar icon background" setting: (circle colour or None, logo colour)."""
+    choice = bridge.setting("pillColor", "claude")
+    if choice == "transparent":
+        return None, QColor(ACCENT)          # just the logo, in Claude orange
+    if choice == "theme":
+        return QColor(bridge.systemAccent), QColor(Qt.white)
+    return QColor(ACCENT), QColor(Qt.white)
+
+
 def app_pixmap(bridge, size):
     """The icon for the tray, taskbar and Start menu: orange circle with the
-    Claude logo (DuxAI/assets/logo.svg, made white) or a sparkle. (The Argos
-    dog logo is used inside the app: settings and notifications.)"""
+    Claude logo (DuxAI/assets/logo.svg, made white) or a sparkle. Follows the
+    "Bar icon background" setting. (The Argos dog is used for settings.)"""
+    circle, ink = icon_style(bridge)
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
     p.setPen(Qt.NoPen)
-    p.setBrush(QColor(ACCENT))
-    p.drawEllipse(0, 0, size, size)
+    if circle is not None:
+        p.setBrush(circle)
+        p.drawEllipse(0, 0, size, size)
     logo = PLUGIN / "assets" / "logo.svg"
-    pad = round(size * 0.22)
+    pad = round(size * (0.22 if circle is not None else 0.04))
     if logo.exists():
         from PySide6.QtSvg import QSvgRenderer
         glyph = QPixmap(size, size)
@@ -423,15 +462,15 @@ def app_pixmap(bridge, size):
         gp = QPainter(glyph)
         gp.setRenderHint(QPainter.Antialiasing)
         QSvgRenderer(str(logo)).render(gp, QRect(pad, pad, size - 2 * pad, size - 2 * pad).toRectF())
-        gp.setCompositionMode(QPainter.CompositionMode_SourceIn)   # paint it white
-        gp.fillRect(glyph.rect(), Qt.white)
+        gp.setCompositionMode(QPainter.CompositionMode_SourceIn)   # paint it one colour
+        gp.fillRect(glyph.rect(), ink)
         gp.end()
         p.drawPixmap(0, 0, glyph)
     else:
         font = QFont(bridge.iconFont)
         font.setPixelSize(round(size * 0.62))
         p.setFont(font)
-        p.setPen(Qt.white)
+        p.setPen(ink)
         p.drawText(pix.rect(), Qt.AlignCenter, bridge.icon("auto_awesome"))
     p.end()
     return pix
@@ -472,6 +511,15 @@ def write_icon_files(bridge):
     except Exception as exc:  # noqa: BLE001 - icon is cosmetic
         log("Could not write duxai.ico:", exc)
     bridge._app_icon_url = QUrl.fromLocalFile(str(png)).toString()
+    # The dog, for the settings window's taskbar button.
+    try:
+        from PIL import Image
+        dog = duxai.DATA_DIR / "argos.png"
+        argos_icon().pixmap(256, 256).save(str(dog), "PNG")
+        Image.open(dog).save(duxai.DATA_DIR / "argos.ico",
+                             sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    except Exception as exc:  # noqa: BLE001 - icon is cosmetic
+        log("Could not write argos.ico:", exc)
 
 
 # ================================================================== main ==
@@ -524,6 +572,18 @@ def build():
     tray = QSystemTrayIcon(icon, app)
     tray.setToolTip("Argos (Claude)")
     bridge.tray = tray
+
+    # The "Bar icon background" setting changes the tray icon (and app icon) live.
+    last_style = [bridge.setting("pillColor", "claude")]
+
+    def restyle_icon():
+        if bridge.setting("pillColor", "claude") == last_style[0]:
+            return
+        last_style[0] = bridge.setting("pillColor", "claude")
+        new_icon = app_icon(bridge)
+        tray.setIcon(new_icon)
+        app.setWindowIcon(new_icon)
+    bridge.settingsChanged.connect(restyle_icon)
     menu = QMenu()
     menu.addAction("Open chat", lambda: bridge.action.emit("chat"))
     menu.addAction("Ask about a screen region", lambda: bridge.action.emit("capture"))
@@ -552,6 +612,16 @@ def build():
             settings_window["component"] = comp
         win.setIcon(argos_icon())     # the dog, in the taskbar and Alt+Tab
         win.show()
+        if IS_WINDOWS:
+            # Windows takes the taskbar icon from the window's taskbar identity,
+            # not from the window icon: give the settings window its own.
+            try:
+                pythonw = Path(sys.executable).with_name("pythonw.exe")
+                winutil.set_taskbar_identity(int(win.winId()), "Mateo1844.Argos.Settings",
+                                             str(duxai.DATA_DIR / "argos.ico"), "Argos settings",
+                                             f'"{pythonw}" "{Path(__file__).resolve()}"')
+            except Exception as exc:  # noqa: BLE001 - cosmetic
+                log("Taskbar icon failed:", exc)
         win.raise_()
         win.requestActivate()
         bridge.forceForeground(win)
