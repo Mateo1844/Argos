@@ -905,24 +905,15 @@ PluginComponent {
     // ------------------------------------------------- permission popup --
     // Small Allow/Deny card, shown only while Claude waits for approval and the
     // chat window is closed. Opening the chat hides it.
-    // DMS: under the bar. Windows: next to the floating bubble if it's on,
-    // otherwise bottom-right, just above the tray.
+    // DMS: under the bar. Windows: bottom-right, just above the tray (also
+    // when you chat from the floating bubble).
     PanelWindow {
         id: permPopup
-        readonly property bool nearBubble: root.onWindows && root.floatingBubble
-        readonly property real bubbleTop: bubble.margins.bottom + root.bubbleSize
-        readonly property bool roomAbove: bubbleTop + 8 + permBox.implicitHeight <= root.workRect(root.bubbleScreen).h
         visible: root.permission !== null && !root.chatVisible
-        screen: (nearBubble ? root.bubbleScreen : root.parentScreen) ?? null
+        screen: root.parentScreen ?? null
         color: "transparent"
         anchors { top: !root.onWindows; bottom: root.onWindows; right: true }
-        margins {
-            top: root.barThickness + 8
-            right: permPopup.nearBubble ? bubble.margins.right : 12
-            bottom: !permPopup.nearBubble ? 12
-                  : permPopup.roomAbove ? permPopup.bubbleTop + 8
-                  : bubble.margins.bottom - 8 - permBox.implicitHeight
-        }
+        margins { top: root.barThickness + 8; right: 12; bottom: 12 }
         implicitWidth: 340
         implicitHeight: permBox.implicitHeight
         exclusionMode: ExclusionMode.Ignore
