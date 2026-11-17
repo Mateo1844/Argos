@@ -27,9 +27,6 @@ Select part of your screen or some text, and Claude answers with that in view.
 It runs on the **Claude Code CLI**, so it uses your Claude **Pro or Max subscription**.
 You don't need an API key.
 
-> *Named after Argos, Odysseus' faithful dog who recognised him after twenty years, and a
-> wink to Argus Panoptes, the giant with a thousand eyes.*
-
 ## Features
 
 |   |   |
