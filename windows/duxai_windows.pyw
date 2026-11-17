@@ -109,6 +109,7 @@ class Bridge(QObject):
     action = Signal(str, arguments=["name"])   # "toggle", "chat", "capture", "text" -> chat window
     startWithWindowsChanged = Signal()
     holdPopupChanged = Signal()
+    trayStateChanged = Signal(str)   # "busy", "done" or "" (see tray in build())
 
     def __init__(self, app):
         super().__init__()
@@ -260,6 +261,10 @@ class Bridge(QObject):
         subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                        creationflags=0x08000000, timeout=20)   # CREATE_NO_WINDOW
         self.startWithWindowsChanged.emit()
+
+    @Slot(str)
+    def setTrayState(self, state):
+        self.trayStateChanged.emit(state)
 
     # --- commands from the chat window (DMS's Proc.runCommand) ---
     @Slot(str, "QVariantList", "QJSValue")
@@ -440,7 +445,7 @@ def icon_style(bridge):
     return QColor(ACCENT), QColor(Qt.white)
 
 
-def app_pixmap(bridge, size):
+def app_pixmap(bridge, size, badge=None):
     """The icon for the tray, taskbar and Start menu: orange circle with the
     Claude logo (DuxAI/assets/logo.svg, made white) or a sparkle. Follows the
     "Bar icon background" setting. (The Argos dog is used for settings.)"""
@@ -472,14 +477,23 @@ def app_pixmap(bridge, size):
         p.setFont(font)
         p.setPen(ink)
         p.drawText(pix.rect(), Qt.AlignCenter, bridge.icon("auto_awesome"))
+    if badge is not None:
+        # Status dot in the bottom-right corner, with a dark ring so it shows
+        # on any taskbar colour.
+        d = round(size * 0.46)
+        ring = max(1, round(size * 0.07))
+        p.setBrush(QColor("#1F1E1D"))
+        p.drawEllipse(size - d, size - d, d, d)
+        p.setBrush(badge)
+        p.drawEllipse(size - d + ring, size - d + ring, d - 2 * ring, d - 2 * ring)
     p.end()
     return pix
 
 
-def app_icon(bridge):
+def app_icon(bridge, badge=None):
     icon = QIcon()
     for size in (16, 20, 24, 32, 40, 48, 64, 128, 256):
-        icon.addPixmap(app_pixmap(bridge, size))
+        icon.addPixmap(app_pixmap(bridge, size, badge))
     return icon
 
 
@@ -576,13 +590,49 @@ def build():
     # The "Bar icon background" setting changes the tray icon (and app icon) live.
     last_style = [bridge.setting("pillColor", "claude")]
 
+    # Status dot on the tray icon: blinking amber while Claude works, green when
+    # an answer came in while the chat was closed (until you open it).
+    tray_state = {"state": "", "blink": False}
+    busy_colour, done_colour = QColor("#F2B84B"), QColor("#5FC36B")
+    tray_icons = {}
+
+    def tray_icon_for(key):
+        if key not in tray_icons:
+            badge = {"busy": busy_colour, "done": done_colour}.get(key)
+            tray_icons[key] = app_icon(bridge, badge)
+        return tray_icons[key]
+
+    def update_tray():
+        state = tray_state["state"]
+        key = "" if state == "busy" and tray_state["blink"] else state
+        tray.setIcon(tray_icon_for(key))
+        tray.setToolTip({"busy": "Argos: Claude is working…",
+                         "done": "Argos: answer ready"}.get(state, "Argos (Claude)"))
+    blink_timer = QTimer(app)
+    blink_timer.setInterval(600)
+
+    def blink():
+        tray_state["blink"] = not tray_state["blink"]
+        update_tray()
+    blink_timer.timeout.connect(blink)
+
+    def set_tray_state(state):
+        tray_state["state"], tray_state["blink"] = state, False
+        if state == "busy":
+            blink_timer.start()
+        else:
+            blink_timer.stop()
+        update_tray()
+    bridge.trayStateChanged.connect(set_tray_state)
+
     def restyle_icon():
         if bridge.setting("pillColor", "claude") == last_style[0]:
             return
         last_style[0] = bridge.setting("pillColor", "claude")
+        tray_icons.clear()
         new_icon = app_icon(bridge)
-        tray.setIcon(new_icon)
         app.setWindowIcon(new_icon)
+        update_tray()
     bridge.settingsChanged.connect(restyle_icon)
     menu = QMenu()
     menu.addAction("Open chat", lambda: bridge.action.emit("chat"))

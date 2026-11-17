@@ -11,6 +11,7 @@ Python classes play the role of Quickshell, so the chat window works unchanged:
 import json
 import sys
 from enum import Enum
+from pathlib import Path
 
 from PySide6.QtCore import QEnum, QObject, QProcess, QTimer, Property, Signal, Slot
 from PySide6.QtGui import QGuiApplication
@@ -21,10 +22,16 @@ BRIDGE = None
 
 
 def python_command(cmd):
-    """['python3', script, ...] -> [this Python, script, ...] (Windows has no 'python3')."""
+    """['python3', script, ...] -> [python.exe, script, ...] (Windows has no 'python3').
+
+    python.exe, not the pythonw.exe Argos runs with: Windows shows a "busy"
+    cursor next to the mouse for a few seconds whenever a GUI program like
+    pythonw.exe starts. python.exe is a console program, and Qt starts it
+    without a console window (Argos itself has no console)."""
     cmd = [str(c) for c in cmd]
     if cmd and cmd[0] in ("python3", "python"):
-        cmd[0] = sys.executable
+        console = Path(sys.executable).with_name("python.exe")
+        cmd[0] = str(console if console.exists() else sys.executable)
     return cmd
 
 

@@ -365,6 +365,15 @@ PluginComponent {
     function screenRect(s) {
         return { x: s?.x ?? s?.virtualX ?? 0, y: s?.y ?? s?.virtualY ?? 0, w: s?.width ?? 1920, h: s?.height ?? 1080 };
     }
+    // Where the bubble can live: the screen, minus the taskbar on Windows (the
+    // bubble's margins are measured from the edges of this area).
+    function workRect(s) {
+        if (onWindows) {
+            const a = dux.workAreaOf(s?.name ?? "");
+            return { x: a.x, y: a.y, w: a.width, h: a.height };
+        }
+        return screenRect(s);
+    }
     function screenAt(x, y) {
         for (const s of allScreens) {
             const r = screenRect(s);
@@ -375,10 +384,10 @@ PluginComponent {
     }
     // Keep the bubble on its screen (also fixes a saved position that's off-screen).
     function clampRight(v) {
-        return Math.min(Math.max(v, 0), screenRect(bubbleScreen).w - bubbleSize);
+        return Math.min(Math.max(v, 0), workRect(bubbleScreen).w - bubbleSize);
     }
     function clampBottom(v) {
-        return Math.min(Math.max(v, 0), screenRect(bubbleScreen).h - bubbleSize);
+        return Math.min(Math.max(v, 0), workRect(bubbleScreen).h - bubbleSize);
     }
 
     function setQuick(key, value) {
@@ -532,6 +541,21 @@ PluginComponent {
     onChatVisibleChanged: {
         if (!chatVisible)
             quickSettingsOpen = false;
+        else
+            unreadAnswer = false;
+    }
+
+    // Windows: the tray icon shows a dot while Claude works ("busy") and when
+    // an answer came in while the chat was closed ("done", until you open it).
+    property bool unreadAnswer: false
+    onBusyChanged: {
+        if (!busy && !chatVisible)
+            unreadAnswer = true;
+    }
+    readonly property string trayState: busy ? "busy" : unreadAnswer ? "done" : ""
+    onTrayStateChanged: {
+        if (onWindows)
+            dux.setTrayState(trayState);
     }
 
     onBubbleChatOpenChanged: {
@@ -896,24 +920,15 @@ PluginComponent {
     // ------------------------------------------------- permission popup --
     // Small Allow/Deny card, shown only while Claude waits for approval and the
     // chat window is closed. Opening the chat hides it.
-    // DMS: under the bar. Windows: next to the floating bubble if it's on,
-    // otherwise bottom-right, just above the tray.
+    // DMS: under the bar. Windows: bottom-right, just above the tray (also
+    // when you chat from the floating bubble).
     PanelWindow {
         id: permPopup
-        readonly property bool nearBubble: root.onWindows && root.floatingBubble
-        readonly property real bubbleTop: bubble.margins.bottom + root.bubbleSize
-        readonly property bool roomAbove: bubbleTop + 8 + permBox.implicitHeight <= root.screenRect(root.bubbleScreen).h
         visible: root.permission !== null && !root.chatVisible
-        screen: (nearBubble ? root.bubbleScreen : root.parentScreen) ?? null
+        screen: root.parentScreen ?? null
         color: "transparent"
         anchors { top: !root.onWindows; bottom: root.onWindows; right: true }
-        margins {
-            top: root.barThickness + 8
-            right: permPopup.nearBubble ? bubble.margins.right : 12
-            bottom: !permPopup.nearBubble ? 12
-                  : permPopup.roomAbove ? permPopup.bubbleTop + 8
-                  : bubble.margins.bottom - 8 - permBox.implicitHeight
-        }
+        margins { top: root.barThickness + 8; right: 12; bottom: 12 }
         implicitWidth: 340
         implicitHeight: permBox.implicitHeight
         exclusionMode: ExclusionMode.Ignore
@@ -1042,11 +1057,11 @@ PluginComponent {
                     return;
                 dragged = true;
                 // The bubble doesn't move during the drag, so this is exact.
-                const from = root.screenRect(root.bubbleScreen);
+                const from = root.workRect(root.bubbleScreen);
                 const x = from.x + from.w - startRight - root.bubbleSize + dx;
                 const y = from.y + from.h - startBottom - root.bubbleSize + dy;
                 // Keep it on the monitor under the mouse (or the one it's on).
-                const r = root.screenRect(root.screenAt(x + root.bubbleSize / 2, y + root.bubbleSize / 2) ?? root.bubbleScreen);
+                const r = root.workRect(root.screenAt(x + root.bubbleSize / 2, y + root.bubbleSize / 2) ?? root.bubbleScreen);
                 ghostX = Math.min(Math.max(x, r.x), r.x + r.w - root.bubbleSize);
                 ghostY = Math.min(Math.max(y, r.y), r.y + r.h - root.bubbleSize);
             }
@@ -1054,7 +1069,7 @@ PluginComponent {
             function finishDrag() {
                 // Where did it land? Maybe on another monitor.
                 const target = root.screenAt(ghostX + root.bubbleSize / 2, ghostY + root.bubbleSize / 2) ?? root.bubbleScreen;
-                const to = root.screenRect(target);
+                const to = root.workRect(target);
                 root.bubbleScreenName = target?.name ?? "";
                 root.bubbleRight = root.clampRight(to.x + to.w - ghostX - root.bubbleSize);
                 root.bubbleBottom = root.clampBottom(to.y + to.h - ghostY - root.bubbleSize);
@@ -1155,7 +1170,7 @@ PluginComponent {
         delegate: PanelWindow {
             id: dragLayer
             required property var modelData
-            readonly property var area: root.screenRect(modelData)
+            readonly property var area: root.workRect(modelData)
             visible: true
             screen: modelData
             color: "transparent"
