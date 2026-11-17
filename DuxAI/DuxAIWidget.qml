@@ -541,6 +541,21 @@ PluginComponent {
     onChatVisibleChanged: {
         if (!chatVisible)
             quickSettingsOpen = false;
+        else
+            unreadAnswer = false;
+    }
+
+    // Windows: the tray icon shows a dot while Claude works ("busy") and when
+    // an answer came in while the chat was closed ("done", until you open it).
+    property bool unreadAnswer: false
+    onBusyChanged: {
+        if (!busy && !chatVisible)
+            unreadAnswer = true;
+    }
+    readonly property string trayState: busy ? "busy" : unreadAnswer ? "done" : ""
+    onTrayStateChanged: {
+        if (onWindows)
+            dux.setTrayState(trayState);
     }
 
     onBubbleChatOpenChanged: {

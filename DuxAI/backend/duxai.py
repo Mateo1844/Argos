@@ -939,23 +939,7 @@ def cmd_delete(args):
 
 # ----------------------------------------------------------------- main ----
 
-def end_startup_cursor():
-    """Windows shows a "busy" cursor next to the mouse for a few seconds after a
-    GUI program (pythonw) is started, even though this one has no window. Calling
-    a window function once tells Windows the program has started."""
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-        from ctypes import wintypes
-        msg = wintypes.MSG()
-        ctypes.windll.user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)
-    except Exception:  # noqa: BLE001 - cosmetic only
-        pass
-
-
 def main(argv=None):
-    end_startup_cursor()
     parser = argparse.ArgumentParser(description="Argos backend")
     sub = parser.add_subparsers(dest="command", required=True)
 
