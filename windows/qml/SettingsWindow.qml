@@ -30,7 +30,7 @@ Window {
                 Image {
                     width: 44
                     height: 44
-                    source: dux.appIconUrl
+                    source: dux.argosLogoUrl
                     sourceSize: Qt.size(88, 88)
                     smooth: true
                     mipmap: true

@@ -192,6 +192,9 @@ class Bridge(QObject):
                                      Q_ARG("QVariant", action_key))
 
     appIconUrl = Property(str, lambda self: self._app_icon_url, constant=True)
+    # The Argos logo (the dog), shown inside the app: settings header, notifications.
+    argosLogoUrl = Property(str, lambda self: QUrl.fromLocalFile(str(PLUGIN / "assets" / "argos.svg")).toString(),
+                            constant=True)
 
     # --- start with Windows: a shortcut in your Startup folder ---
     # Made through PowerShell: Python from the Microsoft Store would secretly
@@ -401,20 +404,30 @@ class RegionOverlay(QWidget):
 # ================================================================= tray ==
 
 def app_pixmap(bridge, size):
-    """The Argos app icon (DuxAI/assets/argos.svg). Inside the chat the Claude
-    logo stays, as a reminder of the model you're talking to."""
+    """The icon for the tray, taskbar and Start menu: orange circle with the
+    Claude logo (DuxAI/assets/logo.svg, made white) or a sparkle. (The Argos
+    dog logo is used inside the app: settings and notifications.)"""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
-    logo = PLUGIN / "assets" / "argos.svg"
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(ACCENT))
+    p.drawEllipse(0, 0, size, size)
+    logo = PLUGIN / "assets" / "logo.svg"
+    pad = round(size * 0.22)
     if logo.exists():
         from PySide6.QtSvg import QSvgRenderer
-        QSvgRenderer(str(logo)).render(p, QRect(0, 0, size, size).toRectF())
-    else:   # fallback: orange circle with a sparkle
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(ACCENT))
-        p.drawEllipse(0, 0, size, size)
+        glyph = QPixmap(size, size)
+        glyph.fill(Qt.transparent)
+        gp = QPainter(glyph)
+        gp.setRenderHint(QPainter.Antialiasing)
+        QSvgRenderer(str(logo)).render(gp, QRect(pad, pad, size - 2 * pad, size - 2 * pad).toRectF())
+        gp.setCompositionMode(QPainter.CompositionMode_SourceIn)   # paint it white
+        gp.fillRect(glyph.rect(), Qt.white)
+        gp.end()
+        p.drawPixmap(0, 0, glyph)
+    else:
         font = QFont(bridge.iconFont)
         font.setPixelSize(round(size * 0.62))
         p.setFont(font)

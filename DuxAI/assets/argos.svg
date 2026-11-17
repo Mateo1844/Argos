@@ -1,15 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Argos (temporary logo): one watchful eye, ringed by small "eyes" (Argus Panoptes). -->
-  <circle cx="32" cy="32" r="32" fill="#1F2A4A"/>
-  <g fill="#F2C46D">
-    <circle cx="32" cy="6.5" r="1.9"/><circle cx="44.75" cy="9.9" r="1.9"/><circle cx="54.1" cy="19.25" r="1.9"/>
-    <circle cx="57.5" cy="32" r="1.9"/><circle cx="54.1" cy="44.75" r="1.9"/><circle cx="44.75" cy="54.1" r="1.9"/>
-    <circle cx="32" cy="57.5" r="1.9"/><circle cx="19.25" cy="54.1" r="1.9"/><circle cx="9.9" cy="44.75" r="1.9"/>
-    <circle cx="6.5" cy="32" r="1.9"/><circle cx="9.9" cy="19.25" r="1.9"/><circle cx="19.25" cy="9.9" r="1.9"/>
-  </g>
-  <path d="M12 32 Q32 13 52 32 Q32 51 12 32 Z" fill="#F6F1E7"/>
-  <circle cx="32" cy="32" r="9.5" fill="#D98E2B"/>
-  <circle cx="32" cy="32" r="9.5" fill="none" stroke="#9C5F14" stroke-width="1.2"/>
-  <circle cx="32" cy="32" r="4.2" fill="#141A2E"/>
-  <circle cx="35" cy="28.8" r="1.9" fill="#FFFFFF"/>
+  <!-- Argos (temporary logo): Odysseus' faithful old hound, in profile. -->
+  <path d="M17 55 V31 Q17 17 31 17 Q37 17 41 22 L53 29 Q57 33 53 37 L43 37 Q38 44 38 55 Z" fill="#D97757"/>
+  <path d="M21 21 Q31 17 31 27 L29 40 Q24 43 21 38 Z" fill="#A9533A"/>
+  <circle cx="38" cy="27" r="2.3" fill="#1C1B1F"/>
 </svg>
