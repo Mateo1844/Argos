@@ -1085,12 +1085,28 @@ PluginComponent {
         color: "transparent"
         anchors { bottom: true; right: true }
         readonly property real pad: PopoutMetrics.contentPadding
-        readonly property real chatHeight: (chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad
-        readonly property real bubbleTop: bubble.margins.bottom + root.bubbleSize   // distance from the screen bottom
-        readonly property bool roomAbove: bubbleTop + 8 + chatHeight <= root.screenRect(root.bubbleScreen).h
+        readonly property var area: root.screenRect(root.bubbleScreen)
+        // Never taller than the screen.
+        readonly property real chatHeight: Math.min((chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad, area.h - 16)
+        // Everything in "distance from the right / bottom screen edge", like the margins.
+        readonly property real bR: bubble.margins.right
+        readonly property real bB: bubble.margins.bottom
+        readonly property real gap: 8
+        // Next to the bubble: above it, below it, or else beside it (never on top of it).
+        readonly property string side: bB + root.bubbleSize + gap + chatHeight <= area.h ? "above"
+                                       : bB - gap - chatHeight >= 0 ? "below"
+                                       : bR + root.bubbleSize + gap + root.popoutWidth <= area.w || bR - gap - root.popoutWidth < 0 ? "left"
+                                       : "right"
+        function clamp(v, max) {
+            return Math.min(Math.max(v, 0), Math.max(0, max));
+        }
         margins {
-            right: Math.min(bubble.margins.right, Math.max(0, root.screenRect(root.bubbleScreen).w - root.popoutWidth))
-            bottom: bubbleChat.roomAbove ? bubbleChat.bubbleTop + 8 : Math.max(0, bubble.margins.bottom - bubbleChat.chatHeight - 8)
+            right: bubbleChat.side === "left" ? bubbleChat.clamp(bubbleChat.bR + root.bubbleSize + bubbleChat.gap, bubbleChat.area.w - root.popoutWidth)
+                 : bubbleChat.side === "right" ? bubbleChat.bR - bubbleChat.gap - root.popoutWidth
+                 : bubbleChat.clamp(bubbleChat.bR, bubbleChat.area.w - root.popoutWidth)
+            bottom: bubbleChat.side === "above" ? bubbleChat.bB + root.bubbleSize + bubbleChat.gap
+                  : bubbleChat.side === "below" ? bubbleChat.bB - bubbleChat.gap - bubbleChat.chatHeight
+                  : bubbleChat.clamp(bubbleChat.bB, bubbleChat.area.h - bubbleChat.chatHeight)
         }
         implicitWidth: root.popoutWidth
         implicitHeight: chatHeight
