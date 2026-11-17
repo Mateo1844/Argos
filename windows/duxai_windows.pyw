@@ -522,7 +522,10 @@ def build():
     settings_window = {}
 
     def open_settings():
-        if "w" not in settings_window:
+        # Look the window up every time: after it's closed once, Python's handle
+        # to it can go stale (the window itself still exists, just hidden).
+        win = next((w for w in QGuiApplication.topLevelWindows() if w.objectName() == "argosSettings"), None)
+        if win is None:
             comp = QQmlComponent(engine, QUrl.fromLocalFile(str(HERE / "qml" / "SettingsWindow.qml")))
             win = comp.createWithInitialProperties(
                 {"settingsPage": QUrl.fromLocalFile(str(PLUGIN / "DuxAISettings.qml"))})
@@ -530,10 +533,11 @@ def build():
                 log("Settings window failed:", [e.toString() for e in comp.errors()])
                 return
             engine.setObjectOwnership(win, QQmlEngine.CppOwnership)
-            settings_window["w"] = win
-        settings_window["w"].show()
-        settings_window["w"].raise_()
-        settings_window["w"].requestActivate()
+            settings_window["component"] = comp
+        win.show()
+        win.raise_()
+        win.requestActivate()
+        bridge.forceForeground(win)
 
     menu.addAction("Settings…", open_settings)
 

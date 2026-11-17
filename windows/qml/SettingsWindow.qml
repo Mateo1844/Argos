@@ -8,6 +8,7 @@ import qs.DCommon.Widgets
 
 Window {
     id: settingsWindow
+    objectName: "argosSettings"     // the app finds the window by this name
     property url settingsPage
     title: "Argos settings"
     width: 560
