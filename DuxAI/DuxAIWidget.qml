@@ -247,6 +247,39 @@ PluginComponent {
         }
     }
 
+    // The look of the floating bubble: logo circle with a soft shadow.
+    component BubbleFace: Item {
+        id: face
+        property bool hovered: false
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 48
+            height: 48
+            radius: 24
+            color: Qt.rgba(0, 0, 0, face.hovered ? 0.35 : 0.25)
+        }
+        LogoCircle {
+            id: faceCircle
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: -1
+            size: face.hovered ? 46 : 44
+            accent: root.accent
+            logoPath: root.logoPath
+            hasLogo: root.hasLogo
+            Behavior on size {
+                NumberAnimation { duration: 100 }
+            }
+            SequentialAnimation on opacity {
+                running: root.busy
+                loops: Animation.Infinite
+                onStopped: faceCircle.opacity = 1
+                NumberAnimation { to: 0.5; duration: 600; easing.type: Easing.InOutQuad }
+                NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutQuad }
+            }
+        }
+    }
+
     // Round colored circle with the logo inside (bar, chat header, empty
     // screen). Shows a white copy of assets/logo.svg if it exists, otherwise
     // a sparkle icon. (Inline component: no extra file for QML to find.)
@@ -314,15 +347,25 @@ PluginComponent {
     property bool allowWeb: pluginData.allowWeb ?? false
     property bool screenViewer: pluginData.screenViewer ?? true   // Claude may look at the screen when needed
     // Floating bubble: a small draggable button that stays on top (handy during lectures).
-    readonly property bool floatingBubble: pluginData.floatingBubble ?? false
+    property bool floatingBubble: pluginData.floatingBubble ?? false
     property real bubbleRight: pluginData.bubbleRight ?? 24      // distance to the right screen edge
     property real bubbleBottom: pluginData.bubbleBottom ?? 96    // distance to the bottom screen edge
+    readonly property int bubbleSize: 56
+    // Keep the bubble on the screen (also fixes a saved position that's off-screen).
+    function clampRight(v) {
+        return Math.min(Math.max(v, 0), (root.parentScreen?.width ?? 1920) - bubbleSize);
+    }
+    function clampBottom(v) {
+        return Math.min(Math.max(v, 0), (root.parentScreen?.height ?? 1080) - bubbleSize);
+    }
 
     function setQuick(key, value) {
         if (key === "allowWeb")
             allowWeb = value;
         else if (key === "screenViewer")
             screenViewer = value;
+        else if (key === "floatingBubble")
+            floatingBubble = value;
         pluginService?.savePluginData("duxAi", key, value);
     }
     readonly property int maxImageSide: parseInt(pluginData.maxImageSide || "1280")
@@ -821,46 +864,29 @@ PluginComponent {
     // ------------------------------------------------------- floating bubble --
     // Settings → "Floating bubble". Drag it anywhere; click = chat,
     // right-click = ask about a screen region. Stays above fullscreen video.
+    //
+    // Dragging: the bubble itself stays put while a see-through copy follows
+    // the mouse (dragLayer); it moves once, when you let go. Moving the real
+    // window during the drag doesn't work well: the compositor moves it a
+    // moment later, so mouse positions are measured from the wrong place.
     PanelWindow {
         id: bubble
         visible: root.floatingBubble
         screen: root.parentScreen ?? null
         color: "transparent"
         anchors { bottom: true; right: true }
-        margins { bottom: root.bubbleBottom; right: root.bubbleRight }
-        implicitWidth: 56
-        implicitHeight: 56
+        margins { bottom: root.clampBottom(root.bubbleBottom); right: root.clampRight(root.bubbleRight) }
+        implicitWidth: root.bubbleSize
+        implicitHeight: root.bubbleSize
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.namespace: "dux-ai:bubble"
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
-        // Soft shadow so it stands out on any background.
-        Rectangle {
-            anchors.centerIn: parent
-            width: 48
-            height: 48
-            radius: 24
-            color: Qt.rgba(0, 0, 0, bubbleMouse.containsMouse ? 0.35 : 0.25)
-        }
-        LogoCircle {
-            id: bubbleCircle
-            anchors.centerIn: parent
-            anchors.verticalCenterOffset: -1
-            size: bubbleMouse.containsMouse ? 46 : 44
-            accent: root.accent
-            logoPath: root.logoPath
-            hasLogo: root.hasLogo
-            Behavior on size {
-                NumberAnimation { duration: 100 }
-            }
-            SequentialAnimation on opacity {
-                running: root.busy
-                loops: Animation.Infinite
-                onStopped: bubbleCircle.opacity = 1
-                NumberAnimation { to: 0.5; duration: 600; easing.type: Easing.InOutQuad }
-                NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutQuad }
-            }
+        BubbleFace {
+            anchors.fill: parent
+            hovered: bubbleMouse.containsMouse
+            opacity: bubbleMouse.dragged ? 0.25 : 1
         }
 
         MouseArea {
@@ -871,15 +897,19 @@ PluginComponent {
             cursorShape: dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
             property real pressX: 0
             property real pressY: 0
+            property real startRight: 0
+            property real startBottom: 0
+            property real targetRight: 0
+            property real targetBottom: 0
             property bool dragged: false
 
             onPressed: mouse => {
                 pressX = mouse.x;
                 pressY = mouse.y;
+                startRight = bubble.margins.right;
+                startBottom = bubble.margins.bottom;
                 dragged = false;
             }
-            // The window follows the mouse: move it by how far the mouse moved
-            // inside it (margins count from the bottom-right corner).
             onPositionChanged: mouse => {
                 if (!pressed || mouse.buttons !== Qt.LeftButton)
                     return;
@@ -887,13 +917,25 @@ PluginComponent {
                 if (!dragged && Math.abs(dx) + Math.abs(dy) < 4)
                     return;
                 dragged = true;
-                root.bubbleRight = Math.max(0, root.bubbleRight - dx);
-                root.bubbleBottom = Math.max(0, root.bubbleBottom - dy);
+                // The bubble doesn't move during the drag, so this is exact.
+                targetRight = root.clampRight(startRight - dx);
+                targetBottom = root.clampBottom(startBottom - dy);
+            }
+            function finishDrag() {
+                root.bubbleRight = targetRight;
+                root.bubbleBottom = targetBottom;
+                pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(targetRight));
+                pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(targetBottom));
+                dragged = false;
+            }
+            // If the system takes the mouse away mid-drag, still put the bubble where it was.
+            onCanceled: {
+                if (dragged)
+                    finishDrag();
             }
             onReleased: mouse => {
                 if (dragged) {
-                    pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(root.bubbleRight));
-                    pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(root.bubbleBottom));
+                    finishDrag();
                 } else if (mouse.button === Qt.RightButton) {
                     root.startCapture();
                 } else {
@@ -901,6 +943,31 @@ PluginComponent {
                 }
                 dragged = false;
             }
+        }
+    }
+
+    // Full-screen, click-through layer that only shows the bubble copy while
+    // dragging. It exists as long as the bubble does (empty otherwise): a new
+    // window appearing mid-drag would take the mouse away from the bubble.
+    PanelWindow {
+        id: dragLayer
+        visible: root.floatingBubble
+        screen: root.parentScreen ?? null
+        color: "transparent"
+        anchors { top: true; bottom: true; left: true; right: true }
+        exclusionMode: ExclusionMode.Ignore
+        mask: Region {}
+        WlrLayershell.namespace: "dux-ai:bubble-drag"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+        BubbleFace {
+            visible: bubbleMouse.dragged
+            width: root.bubbleSize
+            height: root.bubbleSize
+            x: dragLayer.width - bubbleMouse.targetRight - root.bubbleSize
+            y: dragLayer.height - bubbleMouse.targetBottom - root.bubbleSize
+            hovered: true
         }
     }
 
@@ -1016,6 +1083,14 @@ PluginComponent {
                         hint: "Claude may look at your screen when you ask about it"
                         checked: root.screenViewer
                         onToggled: root.setQuick("screenViewer", !root.screenViewer)
+                    }
+                    SwitchRow {
+                        width: parent.width
+                        icon: "chat_bubble"
+                        label: "Floating bubble"
+                        hint: "A small button that stays on top, also over fullscreen video"
+                        checked: root.floatingBubble
+                        onToggled: root.setQuick("floatingBubble", !root.floatingBubble)
                     }
                 }
             }

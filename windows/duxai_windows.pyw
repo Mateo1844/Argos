@@ -392,6 +392,7 @@ def build():
     engine.addImportPath(str(HERE / "qml"))
     engine.rootContext().setContextProperty("dux", bridge)
     qmlRegisterType(QUrl.fromLocalFile(str(HERE / "qml" / "PanelWindow.qml")), "Quickshell", 1, 0, "PanelWindow")
+    qmlRegisterType(QUrl.fromLocalFile(str(HERE / "qml" / "Region.qml")), "Quickshell", 1, 0, "Region")
     shims.ToplevelManager()   # create the singleton before QML asks for it
 
     # The chat (same file as on DMS).

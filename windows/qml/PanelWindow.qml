@@ -26,13 +26,23 @@ Window {
     property Edges anchors: Edges {}
     property Margins margins: Margins {}
 
+    property var mask: null      // "mask: Region {}" = clicks go through the window
+
     readonly property rect area: dux.primaryWorkArea()   // main screen without the taskbar
+    readonly property bool fillWidth: anchors.left && anchors.right
+    readonly property bool fillHeight: anchors.top && anchors.bottom
 
     transientParent: null   // its own top-level window
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
+           | (mask ? Qt.WindowTransparentForInput : 0)
     color: "transparent"
-    width: implicitWidth
-    height: implicitHeight
-    x: anchors.right ? area.x + area.width - width - margins.right : area.x + margins.left
-    y: anchors.bottom ? area.y + area.height - height - margins.bottom : area.y + margins.top
+    width: fillWidth ? area.width - margins.left - margins.right : implicitWidth
+    height: fillHeight ? area.height - margins.top - margins.bottom : implicitHeight
+    // Placed by anchors + margins, and always kept inside the work area.
+    x: Math.min(Math.max(anchors.left || !anchors.right ? area.x + margins.left
+                                                         : area.x + area.width - width - margins.right,
+                         area.x), area.x + area.width - width)
+    y: Math.min(Math.max(anchors.top || !anchors.bottom ? area.y + margins.top
+                                                         : area.y + area.height - height - margins.bottom,
+                         area.y), area.y + area.height - height)
 }
