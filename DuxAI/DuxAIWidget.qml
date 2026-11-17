@@ -361,6 +361,8 @@ PluginComponent {
         return n < 1000 ? String(n) : (n < 100000 ? (n / 1000).toFixed(1) : Math.round(n / 1000)) + "k";
     }
 
+    property bool followEnd: true       // auto-scroll to new text; off while the user has scrolled up
+
     signal focusInput
     signal scrollToEnd
 
@@ -530,6 +532,7 @@ PluginComponent {
 
         pendingImage = "";
         pendingQuote = "";
+        followEnd = true;   // a new message always jumps to the bottom
         busy = true;
         gotFinal = false;
         status = "";
@@ -683,6 +686,7 @@ PluginComponent {
             chatTitle = ev.chat.title;
             tokens = ev.tokens || null;
             view = "chat";
+            followEnd = true;
             scrollToEnd();
         });
     }
@@ -712,6 +716,86 @@ PluginComponent {
             const ev = lastJson(out);
             logoPath = ev?.path || "";
         });
+    }
+
+    // ------------------------------------------------- permission popup --
+    // Small Allow/Deny card under the bar, shown only while Claude waits for
+    // approval and the chat window is closed. Opening the chat hides it.
+    PanelWindow {
+        id: permPopup
+        visible: root.permission !== null && !root.interactionActive
+        screen: root.parentScreen ?? null
+        color: "transparent"
+        anchors { top: true; right: true }
+        margins { top: root.barThickness + 8; right: 12 }
+        implicitWidth: 340
+        implicitHeight: permBox.implicitHeight
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.namespace: "dux-ai:permission"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+        Rectangle {
+            id: permBox
+            width: parent.width
+            implicitHeight: permBody.implicitHeight + 24
+            radius: Theme.cornerRadius
+            color: Theme.surfaceContainer
+            border.width: 1
+            border.color: Theme.withAlpha(root.accent, 0.6)
+
+            Column {
+                id: permBody
+                x: 12
+                y: 12
+                width: parent.width - 24
+                spacing: 8
+
+                StyledText {
+                    text: "Claude wants to:"
+                    font.pixelSize: root.fsSmall
+                    font.weight: Font.Medium
+                    color: Theme.onSurface
+                }
+                StyledText {
+                    width: parent.width
+                    text: root.permission ? (root.permission.plain !== "" ? root.permission.plain : root.permission.summary) : ""
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 5
+                    elide: Text.ElideRight
+                    font.pixelSize: root.fsSmall
+                    color: Theme.onSurface
+                }
+                Row {
+                    anchors.right: parent.right
+                    spacing: 8
+                    Rectangle {
+                        width: popOpenText.implicitWidth + 24
+                        height: 30
+                        radius: 15
+                        color: Theme.withAlpha(Theme.onSurface, popOpenMouse.containsMouse ? 0.14 : 0.07)
+                        StyledText { id: popOpenText; anchors.centerIn: parent; text: "Open chat"; font.pixelSize: root.fsSmall; color: Theme.onSurface }
+                        MouseArea { id: popOpenMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPopout() }
+                    }
+                    Rectangle {
+                        width: popDenyText.implicitWidth + 24
+                        height: 30
+                        radius: 15
+                        color: Theme.withAlpha(Theme.onSurface, popDenyMouse.containsMouse ? 0.14 : 0.07)
+                        StyledText { id: popDenyText; anchors.centerIn: parent; text: "Deny"; font.pixelSize: root.fsSmall; color: Theme.onSurface }
+                        MouseArea { id: popDenyMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.answerPermission(false) }
+                    }
+                    Rectangle {
+                        width: popAllowText.implicitWidth + 24
+                        height: 30
+                        radius: 15
+                        color: popAllowMouse.containsMouse ? Qt.lighter(root.accent, 1.1) : root.accent
+                        StyledText { id: popAllowText; anchors.centerIn: parent; text: "Allow"; font.pixelSize: root.fsSmall; font.weight: Font.Medium; color: "white" }
+                        MouseArea { id: popAllowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.answerPermission(true) }
+                    }
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------ bar pill --
@@ -756,6 +840,12 @@ PluginComponent {
             implicitHeight: root.popoutHeight - 40
             width: parent ? parent.width : root.popoutWidth
 
+            // How far the chat list reaches under the input box. Only when nothing sits
+            // between them (no approval card / attachment), since those are see-through.
+            readonly property real listOverlap: (inputBox.visible && root.permission === null
+                                                 && root.pendingImage === "" && root.pendingQuote === "")
+                                                ? inputBox.height / 2 + Theme.spacingS : 0   // ends mid-box: hidden behind the straight part, never in the rounded corners
+
             Connections {
                 target: root
                 function onFocusInput() {
@@ -763,7 +853,8 @@ PluginComponent {
                         input.forceActiveFocus();
                 }
                 function onScrollToEnd() {
-                    Qt.callLater(() => chatList.positionViewAtEnd());
+                    if (root.followEnd)
+                        Qt.callLater(() => chatList.snapToEnd());
                 }
                 function onInteractionActiveChanged() {
                     if (root.interactionActive)
@@ -909,14 +1000,127 @@ PluginComponent {
                         }
                     }
 
+                    // "Jump to bottom" button: shown when scrolled up.
+                    Rectangle {
+                        z: 10
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 6
+                        width: 44
+                        height: 22
+                        radius: 11
+                        // Only when well above the bottom (more than ~160 px behind).
+                        readonly property bool farBehind: chatList.contentHeight + chatList.bottomMargin - chatList.height - (chatList.contentY - chatList.originY) > 160
+                        visible: opacity > 0
+                        opacity: messages.count > 0 && farBehind ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 150 } }
+                        // Solid (alpha forced to 1): theme surfaces can be see-through.
+                        color: {
+                            const c = jumpMouse.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh;
+                            return Qt.rgba(c.r, c.g, c.b, 1);
+                        }
+                        border.width: 1
+                        border.color: Theme.withAlpha(Theme.onSurface, 0.18)
+
+                        DIcon {
+                            anchors.centerIn: parent
+                            name: "keyboard_arrow_down"
+                            size: 16
+                            color: jumpMouse.containsMouse ? root.accent : Theme.onSurfaceVariant
+                        }
+                        MouseArea {
+                            id: jumpMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.followEnd = true;
+                                chatList.snapToEnd();
+                            }
+                        }
+                    }
+
                     ListView {
                         id: chatList
-                        anchors.fill: parent
+                        // The list runs under the input box (which is drawn on top of it),
+                        // so text scrolls behind the input instead of stopping at a hard edge.
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: -win.listOverlap
+                        bottomMargin: win.listOverlap    // so the last line can scroll up above the input
                         clip: true
                         spacing: Theme.spacingM
                         model: messages
                         boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.vertical: ScrollBar {}
+                        // Scrolling up stops the auto-follow; reaching the bottom again resumes it.
+                        onMovementStarted: root.followEnd = false
+                        onMovementEnded: root.followEnd = nearEnd()
+                        maximumFlickVelocity: 5000
+
+                        // Distance (px) between the visible bottom and the end of the chat.
+                        function distToEnd() {
+                            return contentHeight + bottomMargin - height - (contentY - originY);
+                        }
+                        // "At the bottom" also counts when only a few lines short of it.
+                        function nearEnd() {
+                            return distToEnd() < 48;
+                        }
+                        // The list got taller/shorter (input box grew or shrank): stay at the bottom if we were.
+                        // Jump to the very end, including the bottom margin that keeps the last
+                        // line above the input box (positionViewAtEnd() alone can ignore it).
+                        function snapToEnd() {
+                            positionViewAtEnd();
+                            contentY = Math.max(originY - topMargin, originY + contentHeight + bottomMargin - height);
+                        }
+                        onHeightChanged: if (root.followEnd) Qt.callLater(() => chatList.snapToEnd())
+                        onBottomMarginChanged: if (root.followEnd) Qt.callLater(() => chatList.snapToEnd())
+                        // New content (e.g. your message after sending): same.
+                        onContentHeightChanged: if (root.followEnd) Qt.callLater(() => chatList.snapToEnd())
+                        flickDeceleration: 2200
+
+                        // Touchpad scrolling with momentum. Wayland only sends the finger movement,
+                        // so when the fingers lift we measure the speed and let the list coast.
+                        WheelHandler {
+                            id: padScroll
+                            acceptedDevices: PointerDevice.TouchPad
+                            property real velocity: 0      // contentY change in px/s
+                            property real lastTime: 0
+
+                            onWheel: event => {
+                                const dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 3;
+                                if (chatList.flicking)
+                                    chatList.cancelFlick();
+                                const now = Date.now();
+                                const dt = Math.max(1, now - lastTime);
+                                const inst = -dy / dt * 1000;
+                                velocity = lastTime > 0 && dt < 120 ? velocity * 0.6 + inst * 0.4 : inst;
+                                lastTime = now;
+                                const minY = chatList.originY - chatList.topMargin;
+                                const maxY = Math.max(minY, chatList.originY + chatList.contentHeight + chatList.bottomMargin - chatList.height);
+                                chatList.contentY = Math.max(minY, Math.min(maxY, chatList.contentY - dy));
+                                root.followEnd = false;
+                                coastTimer.restart();
+                            }
+                        }
+                        // No wheel event for a moment = fingers lifted: start the coasting.
+                        Timer {
+                            id: coastTimer
+                            interval: 70
+                            onTriggered: {
+                                const v = padScroll.velocity;
+                                padScroll.velocity = 0;
+                                padScroll.lastTime = 0;
+                                if (Math.abs(v) > 150)
+                                    chatList.flick(0, -v);
+                                else
+                                    root.followEnd = chatList.nearEnd();
+                            }
+                        }
+                        ScrollBar.vertical: ScrollBar {
+                            onPressedChanged: root.followEnd = pressed ? false : chatList.nearEnd()
+                        }
 
                         delegate: Item {
                             id: msg
@@ -1051,12 +1255,34 @@ PluginComponent {
                                     Row {
                                         visible: !msg.isUser && msg.text === "" && msg.isLast && root.busy
                                         spacing: 8
-                                        DSpinner {
-                                            size: 16
+                                        height: 20
+                                        // Three dots that blink one after another.
+                                        Row {
+                                            spacing: 5
                                             anchors.verticalCenter: parent.verticalCenter
+                                            Repeater {
+                                                model: 3
+                                                Rectangle {
+                                                    required property int index
+                                                    width: 7
+                                                    height: 7
+                                                    radius: 3.5
+                                                    color: Theme.onSurfaceVariant
+                                                    opacity: 0.25
+                                                    SequentialAnimation on opacity {
+                                                        running: parent.visible
+                                                        loops: Animation.Infinite
+                                                        PauseAnimation { duration: index * 200 }
+                                                        NumberAnimation { to: 1; duration: 350; easing.type: Easing.InOutQuad }
+                                                        NumberAnimation { to: 0.25; duration: 350; easing.type: Easing.InOutQuad }
+                                                        PauseAnimation { duration: (2 - index) * 200 }
+                                                    }
+                                                }
+                                            }
                                         }
                                         StyledText {
-                                            text: root.status || "Thinking…"
+                                            visible: root.status !== ""
+                                            text: root.status
                                             font.pixelSize: root.fsSmall
                                             color: Theme.onSurfaceVariant
                                             anchors.verticalCenter: parent.verticalCenter
@@ -1402,11 +1628,21 @@ PluginComponent {
 
                 // ---- input box ----
                 Rectangle {
+                    id: inputBox
                     visible: root.view === "chat"
                     Layout.fillWidth: true
                     Layout.preferredHeight: inputCol.implicitHeight + 24   // 14 top + 10 bottom (= side margin)
                     radius: Theme.cornerRadius
                     color: Theme.withAlpha(Theme.onSurface, 0.06)
+
+                    // Solid backing behind the see-through tint, so chat text scrolling
+                    // underneath doesn't show through the input box.
+                    Rectangle {
+                        z: -1
+                        anchors.fill: parent
+                        radius: parent.radius
+                        color: Theme.surfaceContainer
+                    }
                     //border.width: input.activeFocus ? 1 : 0
                     //border.color: Theme.withAlpha(root.accent, 0.6)
 
