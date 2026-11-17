@@ -1370,6 +1370,34 @@ PluginComponent {
                         onContentHeightChanged: if (root.followEnd) Qt.callLater(() => chatList.snapToEnd())
                         flickDeceleration: 2200
 
+                        // Mouse wheel: handled here so following stops on the very first click.
+                        // (Qt's own wheel scrolling reports "movement" a bit late; meanwhile the
+                        // list re-measures messages above you and following pulled you back down.)
+                        WheelHandler {
+                            id: mouseScroll
+                            acceptedDevices: PointerDevice.Mouse
+                            property real target: 0
+                            onWheel: event => {
+                                root.followEnd = false;
+                                const minY = chatList.originY - chatList.topMargin;
+                                const maxY = Math.max(minY, chatList.originY + chatList.contentHeight + chatList.bottomMargin - chatList.height);
+                                const from = wheelAnim.running ? target : chatList.contentY;
+                                target = Math.max(minY, Math.min(maxY, from - event.angleDelta.y / 120 * 72));
+                                wheelAnim.stop();
+                                wheelAnim.to = target;
+                                wheelAnim.start();
+                                if (target >= maxY - 1)
+                                    root.followEnd = true;     // scrolled back to the bottom: follow again
+                            }
+                        }
+                        NumberAnimation {
+                            id: wheelAnim
+                            target: chatList
+                            property: "contentY"
+                            duration: 120
+                            easing.type: Easing.OutCubic
+                        }
+
                         // Touchpad scrolling with momentum. Wayland only sends the finger movement,
                         // so when the fingers lift we measure the speed and let the list coast.
                         WheelHandler {
