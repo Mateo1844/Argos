@@ -1,4 +1,4 @@
-# DUX-AI
+# Argos
 
 Claude in your Dux Shell top bar. A small round button opens a chat
 window. You pick the model and thinking level, select part of your screen and
