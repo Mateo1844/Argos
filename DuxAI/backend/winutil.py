@@ -1,4 +1,4 @@
-"""Windows-only helpers for DUX-AI, using only ctypes (no extra packages).
+"""Windows-only helpers for Argos, using only ctypes (no extra packages).
 
 Used by the backend (screenshots for the view_screen tool) and by the
 Windows app (active window, selected text, global hotkeys).
@@ -103,6 +103,35 @@ def window_info(hwnd):
     exe = _process_name(pid.value)
     app = APP_NAMES.get(exe.lower(), exe[:1].upper() + exe[1:])
     return {"app": app, "title": buf.value, "pid": pid.value}
+
+
+_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, HWND, wintypes.LPARAM)
+user32.EnumWindows.argtypes = [_WNDENUMPROC, wintypes.LPARAM]
+user32.IsWindowVisible.argtypes = [HWND]
+user32.ShowWindow.argtypes = [HWND, ctypes.c_int]
+
+
+def hide_windows_of(pid):
+    """Hide all visible windows of process `pid` (Argos itself, during a
+    screenshot). Returns them, for show_windows()."""
+    found = []
+
+    def callback(hwnd, _lparam):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            found.append(hwnd)
+        return True
+
+    user32.EnumWindows(_WNDENUMPROC(callback), 0)
+    for hwnd in found:
+        user32.ShowWindow(hwnd, 0)    # SW_HIDE
+    return found
+
+
+def show_windows(hwnds):
+    for hwnd in hwnds:
+        user32.ShowWindow(hwnd, 8)    # SW_SHOWNA: show again without taking focus
 
 
 def set_foreground(hwnd):

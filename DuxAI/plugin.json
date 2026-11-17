@@ -1,7 +1,7 @@
 {
     "id": "duxAi",
-    "name": "DUX-AI",
-    "description": "Claude in your top bar: chat, pick model and thinking level, or select part of the screen and ask about it.",
+    "name": "Argos",
+    "description": "Argos: Claude in your top bar. Chat, pick model and thinking level, or select part of the screen and ask about it.",
     "version": "0.1.0",
     "author": "Mateo1844",
     "type": "widget",

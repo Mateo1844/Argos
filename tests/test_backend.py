@@ -224,6 +224,14 @@ class BackendTest(unittest.TestCase):
         config = json.loads(argv[argv.index("--mcp-config") + 1])
         self.assertEqual(config["mcpServers"]["duxai"]["env"]["DUXAI_TARGET_WINDOW"], "4242")
 
+    def test_screen_tool_knows_app_pid(self):
+        """Windows: the screenshot tool hides the Argos windows of this process id."""
+        env = dict(self.env, DUXAI_APP_PID="777")
+        self.run_backend("ask", "--screen", "--", "what's this?", env=env)
+        argv = self.calls()[0]["argv"]
+        config = json.loads(argv[argv.index("--mcp-config") + 1])
+        self.assertEqual(config["mcpServers"]["duxai"]["env"]["DUXAI_APP_PID"], "777")
+
     def test_missing_claude(self):
         env = dict(self.env, PATH="/usr/bin:/bin")
         events = self.run_backend("ask", "--", "hi", env=env)

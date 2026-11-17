@@ -1,4 +1,4 @@
-// DUX-AI: Claude in the DankMaterialShell top bar.
+// Argos: Claude in the DankMaterialShell top bar.
 //
 // This file is only UI. Everything else (talking to Claude, saving chats,
 // screenshots) is done by backend/duxai.py, which we run as a process and
@@ -529,6 +529,37 @@ PluginComponent {
         focusTimer.restart();
     }
 
+    // While Claude takes a screenshot (screen viewer), our windows step aside.
+    property bool hidingForScreenshot: false
+    property var shownBeforeScreenshot: null
+
+    function hideForScreenshot() {
+        shownBeforeScreenshot = { popout: root.interactionActive, bubbleChat: bubbleChatOpen };
+        hidingForScreenshot = true;
+        bubbleChatOpen = false;
+        if (root.interactionActive)
+            root.closePopout();
+    }
+
+    function restoreAfterScreenshot() {
+        hidingForScreenshot = false;        // bubble back first, the chat right after
+        reopenTimer.restart();
+    }
+
+    Timer {
+        id: reopenTimer
+        interval: 60
+        onTriggered: {
+            const was = root.shownBeforeScreenshot || {};
+            root.shownBeforeScreenshot = null;
+            if (was.bubbleChat)
+                root.bubbleChatOpen = true;
+            else if (was.popout && !root.interactionActive)
+                root.triggerPopout();
+            focusTimer.restart();
+        }
+    }
+
     function openBubbleChat() {
         if (root.onWindows && typeof root.showPopupNear === "function")
             root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, true);   // Windows: normal popup, next to the bubble
@@ -549,6 +580,10 @@ PluginComponent {
             startCapture();
         else if (mode === "text")
             grabSelection();
+        else if (mode === "screenshot-hide")
+            hideForScreenshot();
+        else if (mode === "screenshot-restore")
+            restoreAfterScreenshot();
         else
             openPopout();
     }
@@ -577,7 +612,7 @@ PluginComponent {
                 root.pendingImage = ev.path;
                 root.view = "chat";
             } else if (ev?.type === "error") {
-                ToastService.showError("DUX-AI: " + ev.message);
+                ToastService.showError("Argos: " + ev.message);
             }
             root.openPopout();
         })
@@ -593,7 +628,7 @@ PluginComponent {
                 root.pendingQuote = ev.text;
                 root.view = "chat";
             } else if (ev?.type === "error") {
-                ToastService.showError("DUX-AI: " + ev.message);
+                ToastService.showError("Argos: " + ev.message);
             }
             root.openPopout();
         });
@@ -925,7 +960,7 @@ PluginComponent {
     // moment later, so mouse positions are measured from the wrong place.
     PanelWindow {
         id: bubble
-        visible: root.floatingBubble
+        visible: root.floatingBubble && !root.hidingForScreenshot
         screen: root.parentScreen ?? null
         color: "transparent"
         anchors { bottom: true; right: true }

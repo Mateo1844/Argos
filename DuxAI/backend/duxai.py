@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DUX-AI backend.
+"""Argos backend.
 
 The QML widget calls this script for everything that is not UI:
 
@@ -60,7 +60,7 @@ SYSTEM_PROMPT = (
 
 # Agent mode keeps Claude Code's own (tool-using) system prompt and adds this.
 AGENT_PROMPT = (
-    "You are running as DUX-AI, an assistant in the user's desktop top bar "
+    "You are running inside Argos, a desktop assistant app in the user's top bar "
     "(Linux, niri + DankMaterialShell), with access to their computer. Keep "
     "replies short. A message may start with [Active window: app - title]: "
     "'this folder/file/page' usually refers to that window (e.g. a Dolphin title "
@@ -272,8 +272,13 @@ def mcp_config(target_window=""):
     screenshot shows that window and not the chat window in front of it.
     """
     server = {"type": "stdio", "command": sys.executable, "args": [str(Path(__file__).resolve()), "mcp"]}
+    env = {}
     if target_window:
-        server["env"] = {"DUXAI_TARGET_WINDOW": str(target_window)}
+        env["DUXAI_TARGET_WINDOW"] = str(target_window)
+    if os.environ.get("DUXAI_APP_PID"):        # Windows app: its windows get hidden while screenshotting
+        env["DUXAI_APP_PID"] = os.environ["DUXAI_APP_PID"]
+    if env:
+        server["env"] = env
     return json.dumps({"mcpServers": {"duxai": server}})
 
 
@@ -597,7 +602,7 @@ def cmd_ask(args):
                 else:
                     send_to_claude({"type": "control_response", "response": {
                         "subtype": "error", "request_id": ev.get("request_id"),
-                        "error": "Not supported by DUX-AI"}})
+                        "error": "Not supported by Argos"}})
             elif kind == "control_cancel_request":
                 pending.pop(ev.get("request_id"), None)
                 emit(type="permission_cancel", id=ev.get("request_id"))
@@ -708,7 +713,42 @@ def active_window():
     return app, title.strip()
 
 
+def hide_own_windows():
+    """Hide the chat (and bubble) so they don't cover the screenshot.
+    Returns something to pass to show_own_windows()."""
+    if IS_WINDOWS:
+        import winutil
+        pid = int(os.environ.get("DUXAI_APP_PID") or 0)
+        hidden = winutil.hide_windows_of(pid) if pid else []
+        time.sleep(0.12)
+        return hidden
+    if shutil.which("dms"):
+        subprocess.run(["dms", "ipc", "call", "widget", "openWith", "duxAi", "screenshot-hide"],
+                       capture_output=True, timeout=5, **SP)
+        time.sleep(0.4)     # let the popout's closing animation finish
+        return True
+    return None
+
+
+def show_own_windows(hidden):
+    if IS_WINDOWS:
+        import winutil
+        winutil.show_windows(hidden or [])
+    elif hidden:
+        subprocess.run(["dms", "ipc", "call", "widget", "openWith", "duxAi", "screenshot-restore"],
+                       capture_output=True, timeout=5, **SP)
+
+
 def take_screenshot(full=False):
+    """Screenshot without Argos' own windows in the way."""
+    hidden = hide_own_windows()
+    try:
+        return _take_screenshot(full)
+    finally:
+        show_own_windows(hidden)
+
+
+def _take_screenshot(full=False):
     """Screenshot of the active window (or whole monitor). Returns a Path or None.
 
     Keeps only the last 10 of these in images/agent.
@@ -900,7 +940,7 @@ def cmd_delete(args):
 # ----------------------------------------------------------------- main ----
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="DUX-AI backend")
+    parser = argparse.ArgumentParser(description="Argos backend")
     sub = parser.add_subparsers(dest="command", required=True)
 
     ask = sub.add_parser("ask", help="send a message")

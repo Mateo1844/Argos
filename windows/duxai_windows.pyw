@@ -1,4 +1,4 @@
-"""DUX-AI for Windows: Claude in your system tray.
+"""Argos for Windows: Claude in your system tray.
 
 Start it with:  pythonw windows\\duxai_windows.pyw   (or run install.ps1 once)
 
@@ -27,7 +27,7 @@ def startup_error(text):
     """pythonw has no console: show problems at start-up in a message box."""
     if os.name == "nt":
         import ctypes
-        ctypes.windll.user32.MessageBoxW(None, text, "DUX-AI could not start", 0x10)
+        ctypes.windll.user32.MessageBoxW(None, text, "Argos could not start", 0x10)
     print(text, file=sys.stderr)
     raise SystemExit(1)
 
@@ -36,7 +36,7 @@ try:
     import PySide6  # noqa: F401
 except ImportError:
     startup_error("PySide6 is not installed for this Python:\n" + sys.executable +
-                  "\n\nRun windows\\install.ps1 again and check its output, or start DUX-AI from the "
+                  "\n\nRun windows\\install.ps1 again and check its output, or start Argos from the "
                   "Start menu entry the installer made.")
 
 
@@ -58,7 +58,7 @@ def help_windows_find_qt_dlls():
             try:
                 ctypes.WinDLL(str(dll))
             except OSError:
-                pass   # not needed by DUX-AI, or loads later anyway
+                pass   # not needed by Argos, or loads later anyway
 
 
 if os.name == "nt":
@@ -70,7 +70,7 @@ from PySide6.QtQml import QJSValue, QQmlComponent, QQmlEngine, qmlRegisterType
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
-HERE = Path(__file__).resolve().parent            # .../DUX-AI/windows
+HERE = Path(__file__).resolve().parent            # .../<repo folder>/windows
 PLUGIN = HERE.parent / "DuxAI"                    # the DMS plugin folder (shared QML + backend)
 BACKEND = PLUGIN / "backend" / "duxai.py"
 sys.path.insert(0, str(BACKEND.parent))
@@ -116,7 +116,7 @@ class Bridge(QObject):
         self.tray = None
         self.toast = None
         self._app_icon_url = ""
-        self.last_hwnd = 0               # last window you used that isn't DUX-AI
+        self.last_hwnd = 0               # last window you used that isn't Argos
         self.last_window = {"app": "", "title": ""}
         self._hold = False
         self._procs = {}
@@ -185,7 +185,7 @@ class Bridge(QObject):
         self.show_toast(message, details, error)
 
     def show_toast(self, heading, message="", error=False, action_label="", action_key=""):
-        """DUX-AI's own notification card (Windows' own would say it's from "Python")."""
+        """Argos's own notification card (Windows' own would say it's from "Python")."""
         if self.toast is not None:
             QMetaObject.invokeMethod(self.toast, "showToast", Q_ARG("QVariant", heading), Q_ARG("QVariant", message),
                                      Q_ARG("QVariant", bool(error)), Q_ARG("QVariant", action_label),
@@ -198,10 +198,14 @@ class Bridge(QObject):
     # redirect its own writes (registry and AppData) where Windows doesn't look.
     @staticmethod
     def _startup_link():
+        return Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/Argos.lnk"
+
+    @staticmethod
+    def _old_startup_link():   # from when Argos was called DUX-AI
         return Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/DUX-AI.lnk"
 
     def _get_autostart(self):
-        return IS_WINDOWS and self._startup_link().exists()
+        return IS_WINDOWS and (self._startup_link().exists() or self._old_startup_link().exists())
 
     startWithWindows = Property(bool, _get_autostart, notify=startWithWindowsChanged)
 
@@ -211,6 +215,7 @@ class Bridge(QObject):
             return
         import subprocess
         link = str(self._startup_link()).replace("'", "''")
+        old = str(self._old_startup_link()).replace("'", "''")
         if on:
             pythonw = Path(sys.executable).with_name("pythonw.exe")
             target = str(pythonw if pythonw.exists() else sys.executable).replace("'", "''")
@@ -221,6 +226,7 @@ class Bridge(QObject):
                       f"if (Test-Path '{ico}') {{ $l.IconLocation = '{ico}' }}; $l.Save()")
         else:
             script = f"Remove-Item -LiteralPath '{link}' -ErrorAction SilentlyContinue"
+        script += f"; Remove-Item -LiteralPath '{old}' -ErrorAction SilentlyContinue"
         subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                        creationflags=0x08000000, timeout=20)   # CREATE_NO_WINDOW
         self.startWithWindowsChanged.emit()
@@ -270,7 +276,7 @@ class Bridge(QObject):
         hwnd = winutil.foreground_window()
         info = winutil.window_info(hwnd)
         if not hwnd or info["pid"] == os.getpid() or not info["title"]:
-            return   # DUX-AI itself, the desktop, or the taskbar: keep the previous window
+            return   # Argos itself, the desktop, or the taskbar: keep the previous window
         if hwnd != self.last_hwnd or info["title"] != self.last_window["title"]:
             self.last_hwnd = hwnd
             self.last_window = {"app": info["app"], "title": info["title"]}
@@ -395,29 +401,20 @@ class RegionOverlay(QWidget):
 # ================================================================= tray ==
 
 def app_pixmap(bridge, size):
-    """The DUX-AI icon: orange circle with the logo (DuxAI/assets/logo.svg, made
-    white) or a sparkle."""
+    """The Argos app icon (DuxAI/assets/argos.svg). Inside the chat the Claude
+    logo stays, as a reminder of the model you're talking to."""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor(ACCENT))
-    p.drawEllipse(0, 0, size, size)
-    logo = PLUGIN / "assets" / "logo.svg"
-    pad = round(size * 0.22)
+    logo = PLUGIN / "assets" / "argos.svg"
     if logo.exists():
         from PySide6.QtSvg import QSvgRenderer
-        glyph = QPixmap(size, size)
-        glyph.fill(Qt.transparent)
-        gp = QPainter(glyph)
-        gp.setRenderHint(QPainter.Antialiasing)
-        QSvgRenderer(str(logo)).render(gp, QRect(pad, pad, size - 2 * pad, size - 2 * pad).toRectF())
-        gp.setCompositionMode(QPainter.CompositionMode_SourceIn)   # paint it white
-        gp.fillRect(glyph.rect(), Qt.white)
-        gp.end()
-        p.drawPixmap(0, 0, glyph)
-    else:
+        QSvgRenderer(str(logo)).render(p, QRect(0, 0, size, size).toRectF())
+    else:   # fallback: orange circle with a sparkle
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(ACCENT))
+        p.drawEllipse(0, 0, size, size)
         font = QFont(bridge.iconFont)
         font.setPixelSize(round(size * 0.62))
         p.setFont(font)
@@ -456,13 +453,14 @@ def build():
     os.environ.setdefault("QT_QUICK_CONTROLS_MATERIAL_ACCENT", ACCENT)
     # Dark "Material" look; "Basic" (Qt's plain built-in style) is the fallback.
     QQuickStyle.setStyle(os.environ.get("DUXAI_STYLE", "Material"))
+    os.environ["DUXAI_APP_PID"] = str(os.getpid())   # screenshots hide Argos' own windows
     if IS_WINDOWS:
         # Own identity for the taskbar (otherwise windows are grouped under "Python").
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Mateo1844.DUX-AI")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Mateo1844.Argos")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)    # it lives in the tray
-    app.setApplicationName("DUX-AI")
+    app.setApplicationName("Argos")
 
     bridge = Bridge(app)
     shims.BRIDGE = bridge
@@ -495,7 +493,7 @@ def build():
 
     # Tray icon + menu.
     tray = QSystemTrayIcon(icon, app)
-    tray.setToolTip("DUX-AI: Claude")
+    tray.setToolTip("Argos (Claude)")
     bridge.tray = tray
     menu = QMenu()
     menu.addAction("Open chat", lambda: bridge.action.emit("chat"))
@@ -526,7 +524,7 @@ def build():
 
     menu.addAction("Settings…", open_settings)
 
-    # DUX-AI's own notification card.
+    # Argos's own notification card.
     toast_comp = QQmlComponent(engine, QUrl.fromLocalFile(str(HERE / "qml" / "Toast.qml")))
     toast = toast_comp.create()
     if toast is not None:
@@ -587,5 +585,5 @@ if __name__ == "__main__":
         raise
     except Exception:  # noqa: BLE001 - pythonw has no console, so log it
         log(traceback.format_exc())
-        startup_error("DUX-AI crashed while starting:\n\n" + traceback.format_exc()[-1500:] +
+        startup_error("Argos crashed while starting:\n\n" + traceback.format_exc()[-1500:] +
                       f"\n\nFull log: {LOG_FILE}")

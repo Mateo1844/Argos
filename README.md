@@ -1,4 +1,9 @@
-# DUX-AI
+# Argos
+
+<img src="DuxAI/assets/argos.svg" width="72" align="right" alt="Argos logo">
+
+*Named after Odysseus' faithful dog Argos, and a wink to Argus Panoptes, the giant with a thousand eyes.*
+(Formerly DUX-AI. The repository, folder and plugin id keep the old name, so existing setups keep working.)
 
 Claude in your Dux Shell top bar. A small round button opens a chat
 window. You pick the model and thinking level, select part of your screen and
@@ -63,7 +68,7 @@ command. Keep backups of important work anyway.
 
 ## Active window and screen viewer
 
-- **Active window:** DUX-AI quietly sends along which app and window title you
+- **Active window:** Argos quietly sends along which app and window title you
   were looking at (about 20 tokens). That's how "rename the files in this
   folder" or "explain this file" works. In Dolphin, turn on *Configure Dolphin →
   Interface → Show the full path inside the title bar* to send the full path.
@@ -92,9 +97,9 @@ sudo dnf install wl-clipboard python3-pillow
 
 Then:
 
-1. **DMS Settings → Plugins:** enable **DUX-AI** (press scan/refresh if you
+1. **DMS Settings → Plugins:** enable **Argos** (press scan/refresh if you
    don't see it).
-2. **DMS Settings → Dank Bar:** add the **DUX-AI** widget to your bar.
+2. **DMS Settings → Dank Bar:** add the **Argos** widget to your bar.
 3. **Keyboard shortcut:** add this inside `binds { }` in
    `~/.config/niri/config.kdl`:
 
@@ -128,12 +133,12 @@ mode, screen viewer and settings.
    and tick *"Add python.exe to PATH"*.
 2. Get the code: `git clone https://github.com/Mateo1844/DUX-AI.git`, or on
    GitHub use *Code → Download ZIP* and unzip it.
-3. In PowerShell, in the DUX-AI folder, run:
+3. In PowerShell, in the downloaded folder (`DUX-AI`), run:
    ```powershell
    powershell -ExecutionPolicy Bypass -File windows\install.ps1
    ```
    This installs PySide6 (the core part) and Pillow, installs Claude Code if it's missing,
-   adds DUX-AI to the Start menu and starts it.
+   adds Argos to the Start menu and starts it.
 4. Log in to Claude Code once: open a new PowerShell window, run `claude`,
    type `/login` and choose your Claude subscription.
 5. Right-click the tray icon → *Settings…* to turn on *Start with Windows*,
@@ -143,7 +148,7 @@ mode, screen viewer and settings.
 - The installer puts PySide6 and Pillow in `C:\Users\<you>\.duxai-venv`
   (about 100 MB). That short path avoids Windows' path-length limit, which
   otherwise breaks with Python from the Microsoft Store. To uninstall, delete
-  that folder, the DUX-AI folder and the "DUX-AI" Start menu entry.
+  that folder, the DUX-AI folder and the "Argos" Start menu entry.
 - The tray icon may be hidden under the **^** arrow next to the clock. Drag it
   onto the taskbar to keep it visible.
 - To show the full folder path in File Explorer's title (for "this folder"),
@@ -202,7 +207,7 @@ Flags your Claude Code version doesn't support are skipped automatically.
 
 ## Settings
 
-In DMS Settings → Plugins → DUX-AI you can set:
+In DMS Settings → Plugins → Argos you can set:
 
 - default model and thinking level
 - the list of models in the picker

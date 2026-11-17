@@ -1,5 +1,5 @@
 """Make windows/fonts/DuxIcons.ttf: a tiny copy of Google's Material Symbols
-Rounded font with only the icons DUX-AI uses (DMS has the full font; Windows
+Rounded font with only the icons Argos uses (DMS has the full font; Windows
 doesn't, and the full one is 15 MB).
 
 Run again after adding a new icon name to a QML file:

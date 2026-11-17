@@ -9,7 +9,7 @@ import qs.DCommon.Widgets
 Window {
     id: settingsWindow
     property url settingsPage
-    title: "DUX-AI settings"
+    title: "Argos settings"
     width: 560
     height: 720
     color: Theme.surface
@@ -57,7 +57,7 @@ Window {
             StyledText {
                 width: parent.width
                 wrapMode: Text.Wrap
-                text: "Shortcuts, written like Win+Shift+A or Ctrl+Alt+Space. Leave empty to turn one off. Changes apply after restarting DUX-AI (tray icon → Quit, then start it again)."
+                text: "Shortcuts, written like Win+Shift+A or Ctrl+Alt+Space. Leave empty to turn one off. Changes apply after restarting Argos (tray icon → Quit, then start it again)."
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.onSurfaceVariant
             }

@@ -112,7 +112,7 @@ Item {
         width: base.popoutWidth
         height: (content.item ? content.item.implicitHeight : base.popoutHeight) + 2 * pad
         visible: false
-        title: "DUX-AI"
+        title: "Argos"
 
         // Like a flyout: clicking somewhere else closes it.
         onActiveChanged: {

@@ -1,4 +1,4 @@
-// DUX-AI's own notification: a small card above the tray (instead of a
+// Argos's own notification: a small card above the tray (instead of a
 // Windows notification, which would say it comes from "Python").
 import QtQuick
 import QtQuick.Window

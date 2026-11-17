@@ -1,9 +1,9 @@
-# DUX-AI for Windows: one-time setup.
+# Argos for Windows: one-time setup.
 #
-# In PowerShell, from the DUX-AI folder:
+# In PowerShell, from the folder you cloned/downloaded (named DUX-AI):
 #     powershell -ExecutionPolicy Bypass -File windows\install.ps1
 #
-# It installs the Python packages, Claude Code (if missing), adds DUX-AI to
+# It installs the Python packages, Claude Code (if missing), adds Argos to
 # the Start menu and starts it. Nothing here needs administrator rights.
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +13,7 @@ $app = Join-Path $here "duxai_windows.pyw"
 function Ok($text)   { Write-Host "  [ok] $text" -ForegroundColor Green }
 function Warn($text) { Write-Host "  [!]  $text" -ForegroundColor Yellow }
 
-Write-Host "DUX-AI installer"
+Write-Host "Argos installer"
 
 # 1. Python (from python.org or the Microsoft Store)
 $python = (Get-Command python -ErrorAction SilentlyContinue).Source
@@ -57,8 +57,10 @@ if ((Test-Path $claude) -or (Get-Command claude -ErrorAction SilentlyContinue)) 
     Ok "Claude Code installed"
 }
 
-# 4. Start menu shortcut (search "DUX-AI" in Start to launch it)
-$startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\DUX-AI.lnk"
+# 4. Start menu shortcut (search "Argos" in Start to launch it)
+$startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Argos.lnk"
+# (Argos used to be called DUX-AI: remove the old shortcut.)
+Remove-Item (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\DUX-AI.lnk") -ErrorAction SilentlyContinue
 $shell = New-Object -ComObject WScript.Shell
 $link = $shell.CreateShortcut($startMenu)
 $link.TargetPath = $pythonw
@@ -75,7 +77,7 @@ Ok "Start menu shortcut created"
 & $python -c "import PySide6.QtQuick, PIL; print('ok')" | Out-Null
 if ($LASTEXITCODE -ne 0) { Warn "PySide6 doesn't load: see the error above."; exit 1 }
 Start-Process -FilePath $pythonw -ArgumentList "`"$app`""
-Ok "DUX-AI started: look for the orange icon next to the clock (maybe under the ^ arrow)"
+Ok "Argos started: look for the eye icon next to the clock (maybe under the ^ arrow)"
 
 Write-Host ""
 Write-Host "Next steps:"

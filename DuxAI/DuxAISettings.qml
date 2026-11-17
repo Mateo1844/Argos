@@ -9,7 +9,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "DUX-AI"
+        text: "Argos"
         font.pixelSize: Theme.fontSizeLarge
         font.weight: Font.Bold
         color: Theme.onSurface
@@ -139,7 +139,7 @@ PluginSettings {
         settingKey: "trustedFolders"
         label: "Trusted folders"
         description: "Only with \"Trusted folders\": Claude may edit files here without asking. Comma-separated."
-        placeholder: "~/DUX-AI, ~/Projects"
+        placeholder: "~/Projects, ~/Documents/Thesis"
         defaultValue: ""
     }
 
