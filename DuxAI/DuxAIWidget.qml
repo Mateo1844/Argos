@@ -492,9 +492,13 @@ PluginComponent {
     property bool reopenInBubble: false     // after a screenshot/selection, come back in the bubble chat
     readonly property bool chatVisible: interactionActive || bubbleChatOpen
 
-    // Turning the bubble off (e.g. in the gear menu of the bubble chat) closes its chat too.
+    // Turning the bubble on from the bar chat closes that chat (the bubble takes over);
+    // turning it off (e.g. in the gear menu of the bubble chat) closes the bubble's chat.
     onFloatingBubbleChanged: {
-        if (!floatingBubble) {
+        if (floatingBubble) {
+            if (root.interactionActive)
+                root.closePopout();
+        } else {
             bubbleChatOpen = false;
             if (typeof root.closeBubblePopup === "function")
                 root.closeBubblePopup();          // Windows: the popup opened next to the bubble
