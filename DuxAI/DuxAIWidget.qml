@@ -1052,6 +1052,9 @@ PluginComponent {
                 pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(root.bubbleRight));
                 pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(root.bubbleBottom));
                 dragged = false;
+                // Windows: an open chat follows the bubble (on DMS it's tied to it already).
+                if (root.onWindows && root.interactionActive && root.popupAnchor)
+                    Qt.callLater(() => root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, true));
             }
             // If the system takes the mouse away mid-drag, still put the bubble where it was.
             onCanceled: {
