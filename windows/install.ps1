@@ -26,28 +26,24 @@ if (-not $python) {
     exit 1
 }
 Ok "Python: $python"
-$pythonw = Join-Path (Split-Path $python) "pythonw.exe"
-if (-not (Test-Path $pythonw)) { $pythonw = $python }
 
-# Python from the Microsoft Store installs packages in a very deep folder, so a
-# few PySide6 files go over Windows' 260-character path limit. That only works
-# if "long paths" are turned on in Windows.
-$isStorePython = ($python -like "*WindowsApps*") -or ((& $python -c "import site; print(site.getusersitepackages())") -like "*\Packages\PythonSoftwareFoundation*")
-$longPaths = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -ErrorAction SilentlyContinue).LongPathsEnabled
-if ($isStorePython -and $longPaths -ne 1) {
-    Warn "You're using Python from the Microsoft Store. Its package folder is so deep that PySide6 hits Windows' path length limit."
-    Write-Host "  Fix it in one of two ways, then run this installer again:"
-    Write-Host "   A. Install Python from https://www.python.org/downloads/ (tick 'Add python.exe to PATH'), open a NEW PowerShell window."
-    Write-Host "   B. Or allow long paths: open PowerShell AS ADMINISTRATOR and run:"
-    Write-Host '      New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force'
-    exit 1
+# 2. Python packages (PySide6 = the window toolkit, Pillow = screenshots), in
+#    a separate folder inside DUX-AI (".venv"). Short paths: Python from the
+#    Microsoft Store otherwise puts packages in a folder so deep that PySide6
+#    hits Windows' 260-character path limit. No admin rights needed.
+$venv = Join-Path (Split-Path $here) ".venv"
+if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
+    Write-Host "  Creating .venv (one time)..."
+    & $python -m venv $venv
+    if ($LASTEXITCODE -ne 0) { Warn "Could not create the .venv folder."; exit 1 }
 }
-
-# 2. Python packages (PySide6 = the window toolkit, Pillow = screenshots)
-& $python -m pip install --user --upgrade --quiet -r (Join-Path $here "requirements.txt")
+$python = Join-Path $venv "Scripts\python.exe"
+$pythonw = Join-Path $venv "Scripts\pythonw.exe"
+Write-Host "  Installing PySide6 + Pillow (about 100 MB, takes a minute)..."
+& $python -m pip install --upgrade --quiet -r (Join-Path $here "requirements.txt")
 if ($LASTEXITCODE -ne 0) {
     Warn "Installing the Python packages failed (see the error above)."
-    Write-Host "  If it mentions 'Long Path', see the fix at https://github.com/Mateo1844/DUX-AI#windows"
+    Write-Host "  If it mentions 'Long Path': move the DUX-AI folder somewhere shorter (e.g. C:\DUX-AI) and run this again."
     exit 1
 }
 Ok "Python packages installed"

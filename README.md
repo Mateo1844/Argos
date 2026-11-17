@@ -140,11 +140,10 @@ mode, screen viewer and settings.
    the floating bubble, or to change the shortcuts.
 
 **Notes:**
-- **Use Python from python.org, not the Microsoft Store.** The Store version
-  installs packages in such a deep folder that PySide6 fails with a "Long
-  Path" error. If you want to keep the Store version, allow long paths first
-  (PowerShell *as administrator*):
-  `New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force`
+- The installer puts PySide6 and Pillow in a `.venv` folder inside DUX-AI
+  (about 100 MB). That keeps file paths short, which matters with Python from
+  the Microsoft Store. To uninstall, delete the DUX-AI folder and the "DUX-AI"
+  Start menu entry.
 - The tray icon may be hidden under the **^** arrow next to the clock. Drag it
   onto the taskbar to keep it visible.
 - To show the full folder path in File Explorer's title (for "this folder"),
