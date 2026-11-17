@@ -444,6 +444,22 @@ def app_icon(bridge):
     return icon
 
 
+def argos_icon():
+    """The Argos dog (DuxAI/assets/argos.svg) as a window icon, in all sizes."""
+    from PySide6.QtSvg import QSvgRenderer
+    renderer = QSvgRenderer(str(PLUGIN / "assets" / "argos.svg"))
+    icon = QIcon()
+    for size in (16, 20, 24, 32, 40, 48, 64, 128, 256):
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        renderer.render(p, QRect(0, 0, size, size).toRectF())
+        p.end()
+        icon.addPixmap(pix)
+    return icon
+
+
 def write_icon_files(bridge):
     """icon.png (for notifications) and duxai.ico (for the Start menu shortcut)."""
     duxai.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -534,6 +550,7 @@ def build():
                 return
             engine.setObjectOwnership(win, QQmlEngine.CppOwnership)
             settings_window["component"] = comp
+        win.setIcon(argos_icon())     # the dog, in the taskbar and Alt+Tab
         win.show()
         win.raise_()
         win.requestActivate()
