@@ -140,10 +140,10 @@ mode, screen viewer and settings.
    the floating bubble, or to change the shortcuts.
 
 **Notes:**
-- The installer puts PySide6 and Pillow in a `.venv` folder inside DUX-AI
-  (about 100 MB). That keeps file paths short, which matters with Python from
-  the Microsoft Store. To uninstall, delete the DUX-AI folder and the "DUX-AI"
-  Start menu entry.
+- The installer puts PySide6 and Pillow in `C:\Users\<you>\.duxai-venv`
+  (about 100 MB). That short path avoids Windows' path-length limit, which
+  otherwise breaks with Python from the Microsoft Store. To uninstall, delete
+  that folder, the DUX-AI folder and the "DUX-AI" Start menu entry.
 - The tray icon may be hidden under the **^** arrow next to the clock. Drag it
   onto the taskbar to keep it visible.
 - To show the full folder path in File Explorer's title (for "this folder"),

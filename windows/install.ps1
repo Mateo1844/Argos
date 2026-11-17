@@ -28,10 +28,10 @@ if (-not $python) {
 Ok "Python: $python"
 
 # 2. Python packages (PySide6 = the window toolkit, Pillow = screenshots), in
-#    a separate folder inside DUX-AI (".venv"). Short paths: Python from the
+#    their own short folder: C:\Users\<you>\.duxai-venv. Python from the
 #    Microsoft Store otherwise puts packages in a folder so deep that PySide6
 #    hits Windows' 260-character path limit. No admin rights needed.
-$venv = Join-Path (Split-Path $here) ".venv"
+$venv = Join-Path $env:USERPROFILE ".duxai-venv"
 if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
     Write-Host "  Creating .venv (one time)..."
     & $python -m venv $venv
@@ -43,7 +43,6 @@ Write-Host "  Installing PySide6 + Pillow (about 100 MB, takes a minute)..."
 & $python -m pip install --upgrade --quiet -r (Join-Path $here "requirements.txt")
 if ($LASTEXITCODE -ne 0) {
     Warn "Installing the Python packages failed (see the error above)."
-    Write-Host "  If it mentions 'Long Path': move the DUX-AI folder somewhere shorter (e.g. C:\DUX-AI) and run this again."
     exit 1
 }
 Ok "Python packages installed"
@@ -70,6 +69,9 @@ $link.Save()
 Ok "Start menu shortcut created"
 
 # 5. Start it
+# Quick check that the window toolkit really works before starting.
+& $python -c "import PySide6.QtQuick, PIL; print('ok')" | Out-Null
+if ($LASTEXITCODE -ne 0) { Warn "PySide6 doesn't load: see the error above."; exit 1 }
 Start-Process -FilePath $pythonw -ArgumentList "`"$app`""
 Ok "DUX-AI started: look for the orange icon next to the clock (maybe under the ^ arrow)"
 

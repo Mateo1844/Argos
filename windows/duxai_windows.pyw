@@ -22,6 +22,23 @@ import time
 import traceback
 from pathlib import Path
 
+
+def startup_error(text):
+    """pythonw has no console: show problems at start-up in a message box."""
+    if os.name == "nt":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, text, "DUX-AI could not start", 0x10)
+    print(text, file=sys.stderr)
+    raise SystemExit(1)
+
+
+try:
+    import PySide6  # noqa: F401
+except ImportError:
+    startup_error("PySide6 is not installed for this Python:\n" + sys.executable +
+                  "\n\nRun windows\\install.ps1 again and check its output, or start DUX-AI from the "
+                  "Start menu entry the installer made.")
+
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer, QUrl, Property, Signal, Slot, QMimeData
 from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtQml import QJSValue, QQmlComponent, QQmlEngine, qmlRegisterType
@@ -480,4 +497,5 @@ if __name__ == "__main__":
         raise
     except Exception:  # noqa: BLE001 - pythonw has no console, so log it
         log(traceback.format_exc())
-        raise
+        startup_error("DUX-AI crashed while starting:\n\n" + traceback.format_exc()[-1500:] +
+                      f"\n\nFull log: {LOG_FILE}")
