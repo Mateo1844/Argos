@@ -59,6 +59,9 @@ has_image = any(b.get("type") == "image" for b in msg["message"]["content"])
 answer = ["Hello", " there", "!" if not has_image else " I see an image."]
 for part in answer:
     out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": part}}})
+    if os.environ.get("FAKE_CLAUDE_SLOW"):
+        import time
+        time.sleep(2)
 out({"type": "assistant", "message": {"content": [{"type": "text", "text": "".join(answer)}]}})
 out({"type": "result", "subtype": "success", "is_error": False, "result": "".join(answer),
      "session_id": session, "total_cost_usd": 0.0012,

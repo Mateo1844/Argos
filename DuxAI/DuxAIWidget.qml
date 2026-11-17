@@ -247,6 +247,39 @@ PluginComponent {
         }
     }
 
+    // The look of the floating bubble: logo circle with a soft shadow.
+    component BubbleFace: Item {
+        id: face
+        property bool hovered: false
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 48
+            height: 48
+            radius: 24
+            color: Qt.rgba(0, 0, 0, face.hovered ? 0.35 : 0.25)
+        }
+        LogoCircle {
+            id: faceCircle
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: -1
+            size: face.hovered ? 46 : 44
+            accent: root.accent
+            logoPath: root.logoPath
+            hasLogo: root.hasLogo
+            Behavior on size {
+                NumberAnimation { duration: 100 }
+            }
+            SequentialAnimation on opacity {
+                running: root.busy
+                loops: Animation.Infinite
+                onStopped: faceCircle.opacity = 1
+                NumberAnimation { to: 0.5; duration: 600; easing.type: Easing.InOutQuad }
+                NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutQuad }
+            }
+        }
+    }
+
     // Round colored circle with the logo inside (bar, chat header, empty
     // screen). Shows a white copy of assets/logo.svg if it exists, otherwise
     // a sparkle icon. (Inline component: no extra file for QML to find.)
@@ -269,7 +302,8 @@ PluginComponent {
             anchors.centerIn: parent
             width: circle.size * circle.logoScale
             height: width
-            source: circle.hasLogo ? "file://" + circle.logoPath : ""
+            source: !circle.hasLogo || !circle.logoPath ? "" : (circle.logoPath.startsWith("/") ? "file://" + circle.logoPath
+                                                : "file:///" + circle.logoPath.replace(/\\/g, "/"))
             // Render the SVG at (about) the size it is shown, so it stays sharp:
             // shrinking a big render down to ~16 px makes it look pixelated.
             sourceSize: Qt.size(Math.ceil(width * 2), Math.ceil(height * 2))
@@ -289,7 +323,22 @@ PluginComponent {
     }
 
     // ------------------------------------------------------------ settings --
-    readonly property string backend: decodeURIComponent(String(Qt.resolvedUrl("backend/duxai.py")).replace("file://", ""))
+    readonly property string backend: localPath(Qt.resolvedUrl("backend/duxai.py"))
+
+    // Running inside the Windows app instead of DMS? (Its stand-in for
+    // PluginComponent has hostPlatform: "windows"; on DMS this is undefined.)
+    readonly property bool onWindows: root.hostPlatform === "windows"
+
+    // Path <-> file URL, for Linux (/home/..) and Windows (C:\Users\..) paths.
+    function fileUrl(path) {
+        if (!path)
+            return "";
+        return path.startsWith("/") ? "file://" + path : "file:///" + path.replace(/\\/g, "/");
+    }
+    function localPath(url) {
+        const p = decodeURIComponent(String(url).replace(/^file:\/\//, ""));
+        return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;   // "/C:/x" -> "C:/x"
+    }
     property string modelOverride: ""
     property string effortOverride: ""
     readonly property string model: modelOverride || pluginData.model || "sonnet"
@@ -297,12 +346,26 @@ PluginComponent {
     // Quick settings (gear in the chat header); also in the plugin settings page.
     property bool allowWeb: pluginData.allowWeb ?? false
     property bool screenViewer: pluginData.screenViewer ?? true   // Claude may look at the screen when needed
+    // Floating bubble: a small draggable button that stays on top (handy during lectures).
+    property bool floatingBubble: pluginData.floatingBubble ?? false
+    property real bubbleRight: pluginData.bubbleRight ?? 24      // distance to the right screen edge
+    property real bubbleBottom: pluginData.bubbleBottom ?? 96    // distance to the bottom screen edge
+    readonly property int bubbleSize: 56
+    // Keep the bubble on the screen (also fixes a saved position that's off-screen).
+    function clampRight(v) {
+        return Math.min(Math.max(v, 0), (root.parentScreen?.width ?? 1920) - bubbleSize);
+    }
+    function clampBottom(v) {
+        return Math.min(Math.max(v, 0), (root.parentScreen?.height ?? 1080) - bubbleSize);
+    }
 
     function setQuick(key, value) {
         if (key === "allowWeb")
             allowWeb = value;
         else if (key === "screenViewer")
             screenViewer = value;
+        else if (key === "floatingBubble")
+            floatingBubble = value;
         pluginService?.savePluginData("duxAi", key, value);
     }
     readonly property int maxImageSide: parseInt(pluginData.maxImageSide || "1280")
@@ -423,10 +486,61 @@ PluginComponent {
     }
 
     // ------------------------------------------------------- popout control --
+    // The chat can be open in two places: the normal DMS popout (bar button)
+    // or the bubble chat (floating bubble, shown above fullscreen video).
+    property bool bubbleChatOpen: false
+    property bool reopenInBubble: false     // after a screenshot/selection, come back in the bubble chat
+    readonly property bool chatVisible: interactionActive || bubbleChatOpen
+
+    // Turning the bubble on from the bar chat closes that chat (the bubble takes over);
+    // turning it off (e.g. in the gear menu of the bubble chat) closes the bubble's chat.
+    onFloatingBubbleChanged: {
+        if (floatingBubble) {
+            if (root.interactionActive)
+                root.closePopout();
+        } else {
+            bubbleChatOpen = false;
+            if (typeof root.closeBubblePopup === "function")
+                root.closeBubblePopup();          // Windows: the popup opened next to the bubble
+        }
+    }
+
+    // The gear menu closes together with the chat.
+    onChatVisibleChanged: {
+        if (!chatVisible)
+            quickSettingsOpen = false;
+    }
+
+    onBubbleChatOpenChanged: {
+        if (bubbleChatOpen) {
+            fetchWindow();
+            focusTimer.restart();
+        }
+    }
+
     function openPopout() {
+        if (reopenInBubble || bubbleChatOpen) {
+            reopenInBubble = false;
+            openBubbleChat();
+            return;
+        }
         if (!root.interactionActive)
             root.triggerPopout();
         focusTimer.restart();
+    }
+
+    function openBubbleChat() {
+        if (root.onWindows && typeof root.showPopupNear === "function")
+            root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, true);   // Windows: normal popup, next to the bubble
+        else
+            bubbleChatOpen = true;
+    }
+
+    function toggleBubbleChat() {
+        if (root.onWindows && typeof root.showPopupNear === "function")
+            root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, false);  // toggles
+        else
+            bubbleChatOpen = !bubbleChatOpen;
     }
 
     // Called by `dms ipc call widget openWith duxAi <mode>` (keyboard shortcut).
@@ -446,8 +560,10 @@ PluginComponent {
     }
 
     // ------------------------------------------------------------- capture --
-    function startCapture() {
+    function startCapture(fromBubble) {
         fetchWindow();
+        reopenInBubble = fromBubble === true || bubbleChatOpen;
+        bubbleChatOpen = false;
         root.closePopout();          // get the window out of the way first
         captureTimer.restart();
     }
@@ -470,6 +586,7 @@ PluginComponent {
     // Text highlighted anywhere on screen (Wayland primary selection).
     function grabSelection() {
         fetchWindow();
+        reopenInBubble = bubbleChatOpen;
         Proc.runCommand("duxAi.selection", ["python3", root.backend, "selection"], (out, code) => {
             const ev = root.lastJson(out);
             if (ev?.type === "selection") {
@@ -723,7 +840,7 @@ PluginComponent {
     // approval and the chat window is closed. Opening the chat hides it.
     PanelWindow {
         id: permPopup
-        visible: root.permission !== null && !root.interactionActive
+        visible: root.permission !== null && !root.chatVisible
         screen: root.parentScreen ?? null
         color: "transparent"
         anchors { top: true; right: true }
@@ -795,6 +912,160 @@ PluginComponent {
                     }
                 }
             }
+        }
+    }
+
+    // ------------------------------------------------------- floating bubble --
+    // Settings → "Floating bubble". Drag it anywhere; click = chat,
+    // right-click = ask about a screen region. Stays above fullscreen video.
+    //
+    // Dragging: the bubble itself stays put while a see-through copy follows
+    // the mouse (dragLayer); it moves once, when you let go. Moving the real
+    // window during the drag doesn't work well: the compositor moves it a
+    // moment later, so mouse positions are measured from the wrong place.
+    PanelWindow {
+        id: bubble
+        visible: root.floatingBubble
+        screen: root.parentScreen ?? null
+        color: "transparent"
+        anchors { bottom: true; right: true }
+        margins { bottom: root.clampBottom(root.bubbleBottom); right: root.clampRight(root.bubbleRight) }
+        implicitWidth: root.bubbleSize
+        implicitHeight: root.bubbleSize
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.namespace: "dux-ai:bubble"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+        BubbleFace {
+            anchors.fill: parent
+            hovered: bubbleMouse.containsMouse
+            opacity: bubbleMouse.dragged ? 0.25 : 1
+        }
+
+        MouseArea {
+            id: bubbleMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            cursorShape: dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+            property real pressX: 0
+            property real pressY: 0
+            property real startRight: 0
+            property real startBottom: 0
+            property real targetRight: 0
+            property real targetBottom: 0
+            property bool dragged: false
+
+            onPressed: mouse => {
+                pressX = mouse.x;
+                pressY = mouse.y;
+                startRight = bubble.margins.right;
+                startBottom = bubble.margins.bottom;
+                dragged = false;
+            }
+            onPositionChanged: mouse => {
+                if (!pressed || mouse.buttons !== Qt.LeftButton)
+                    return;
+                const dx = mouse.x - pressX, dy = mouse.y - pressY;
+                if (!dragged && Math.abs(dx) + Math.abs(dy) < 4)
+                    return;
+                dragged = true;
+                // The bubble doesn't move during the drag, so this is exact.
+                targetRight = root.clampRight(startRight - dx);
+                targetBottom = root.clampBottom(startBottom - dy);
+            }
+            function finishDrag() {
+                root.bubbleRight = targetRight;
+                root.bubbleBottom = targetBottom;
+                pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(targetRight));
+                pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(targetBottom));
+                dragged = false;
+            }
+            // If the system takes the mouse away mid-drag, still put the bubble where it was.
+            onCanceled: {
+                if (dragged)
+                    finishDrag();
+            }
+            onReleased: mouse => {
+                if (dragged) {
+                    finishDrag();
+                } else if (mouse.button === Qt.RightButton) {
+                    root.startCapture(true);
+                } else {
+                    root.toggleBubbleChat();
+                }
+                dragged = false;
+            }
+        }
+    }
+
+    // The chat, opened from the floating bubble (DMS). Same content as the bar
+    // popout, but on the overlay layer, so it shows above fullscreen video.
+    // Placed next to the bubble: above it if there's room, otherwise below.
+    // Esc or clicking the bubble again closes it.
+    PanelWindow {
+        id: bubbleChat
+        visible: root.bubbleChatOpen && !root.onWindows
+        screen: root.parentScreen ?? null
+        color: "transparent"
+        anchors { bottom: true; right: true }
+        readonly property real pad: PopoutMetrics.contentPadding
+        readonly property real chatHeight: (chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad
+        readonly property real bubbleTop: bubble.margins.bottom + root.bubbleSize   // distance from the screen bottom
+        readonly property bool roomAbove: bubbleTop + 8 + chatHeight <= (root.parentScreen?.height ?? 1080)
+        margins {
+            right: Math.min(bubble.margins.right, Math.max(0, (root.parentScreen?.width ?? 1920) - root.popoutWidth))
+            bottom: bubbleChat.roomAbove ? bubbleChat.bubbleTop + 8 : Math.max(0, bubble.margins.bottom - bubbleChat.chatHeight - 8)
+        }
+        implicitWidth: root.popoutWidth
+        implicitHeight: chatHeight
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.namespace: "dux-ai:chat"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive   // type right away
+
+        Rectangle {
+            anchors.fill: parent
+            radius: Theme.windowRadius
+            color: Theme.surfaceContainer
+            border.width: 1
+            border.color: Theme.withAlpha(Theme.onSurface, 0.08)
+        }
+        Loader {
+            id: chatLoader
+            x: bubbleChat.pad
+            y: bubbleChat.pad
+            width: parent.width - 2 * bubbleChat.pad
+            active: bubbleChat.visible
+            focus: true
+            sourceComponent: root.popoutContent
+            Keys.onEscapePressed: root.bubbleChatOpen = false
+        }
+    }
+
+    // Full-screen, click-through layer that only shows the bubble copy while
+    // dragging. It exists as long as the bubble does (empty otherwise): a new
+    // window appearing mid-drag would take the mouse away from the bubble.
+    PanelWindow {
+        id: dragLayer
+        visible: root.floatingBubble
+        screen: root.parentScreen ?? null
+        color: "transparent"
+        anchors { top: true; bottom: true; left: true; right: true }
+        exclusionMode: ExclusionMode.Ignore
+        mask: Region {}
+        WlrLayershell.namespace: "dux-ai:bubble-drag"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+        BubbleFace {
+            visible: bubbleMouse.dragged
+            width: root.bubbleSize
+            height: root.bubbleSize
+            x: dragLayer.width - bubbleMouse.targetRight - root.bubbleSize
+            y: dragLayer.height - bubbleMouse.targetBottom - root.bubbleSize
+            hovered: true
         }
     }
 
@@ -875,6 +1146,17 @@ PluginComponent {
                 z: 100
             }
 
+            // Click anywhere next to the gear menu: close it (the click does nothing else).
+            MouseArea {
+                visible: root.quickSettingsOpen
+                z: 199
+                anchors.fill: parent
+                anchors.margins: -PopoutMetrics.contentPadding   // also the window's edge
+                acceptedButtons: Qt.AllButtons
+                onPressed: root.quickSettingsOpen = false
+                onWheel: wheel => wheel.accepted = true
+            }
+
             // ---- quick settings panel (gear button) ----
             Rectangle {
                 visible: root.quickSettingsOpen
@@ -910,6 +1192,14 @@ PluginComponent {
                         hint: "Claude may look at your screen when you ask about it"
                         checked: root.screenViewer
                         onToggled: root.setQuick("screenViewer", !root.screenViewer)
+                    }
+                    SwitchRow {
+                        width: parent.width
+                        icon: "chat_bubble"
+                        label: "Floating bubble"
+                        hint: "A small button that stays on top, also over fullscreen video"
+                        checked: root.floatingBubble
+                        onToggled: root.setQuick("floatingBubble", !root.floatingBubble)
                     }
                 }
             }
@@ -1170,7 +1460,7 @@ PluginComponent {
                                             Image {
                                                 width: 36
                                                 height: 24
-                                                source: msg.image ? "file://" + msg.image : ""
+                                                source: root.fileUrl(msg.image)
                                                 sourceSize: Qt.size(72, 48)
                                                 fillMode: Image.PreserveAspectCrop
                                                 asynchronous: true
@@ -1187,7 +1477,7 @@ PluginComponent {
                                             anchors.fill: parent
                                             hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
-                                            onClicked: Qt.openUrlExternally("file://" + msg.image)
+                                            onClicked: Qt.openUrlExternally(root.fileUrl(msg.image))
                                         }
                                     }
 
@@ -1566,7 +1856,7 @@ PluginComponent {
                         height: 28
                         sourceSize: Qt.size(80, 56)
                         fillMode: Image.PreserveAspectCrop
-                        source: root.pendingImage ? "file://" + root.pendingImage : ""
+                        source: root.fileUrl(root.pendingImage)
                         asynchronous: true
                     }
                     StyledText {

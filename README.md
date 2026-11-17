@@ -7,6 +7,11 @@ ask about it, and browse or delete old chats.
 It runs on the **Claude Code CLI**, so it uses your Claude **Pro/Max
 subscription**. You don't need an API key.
 
+There are two versions, and they share the same chat window and backend:
+
+- **Linux:** a DankMaterialShell bar widget (below).
+- **Windows:** a tray app, see [Windows](#windows).
+
 ## Features (v0.1)
 
 - **Bar button:** a round circle in the bar. Left-click opens the chat. Right-click
@@ -25,6 +30,10 @@ subscription**. You don't need an API key.
 - **Token counter:** a small grey number next to the pickers shows how many
   tokens the current chat has used. Hover it to see the last answer's tokens
   (input, how much of it was cached, output).
+- **Floating bubble** (setting): a small draggable round button that stays
+  on top of everything, including fullscreen video, which is handy during
+  lectures. Click opens the chat right next to the bubble, above the video;
+  Esc or another click closes it. Right-click asks about a screen region.
 - **History page:** open, continue or delete old chats. The bottom of the page
   shows how much disk space saved chats use.
 
@@ -100,6 +109,46 @@ Then:
 
 To update later: `cd ~/DUX-AI && git pull && dms ipc call plugins reload duxAi`.
 
+## Windows
+
+The Windows version is a tray app with the same chat window, history, agent
+mode, screen viewer and settings.
+
+| | Linux (DMS) | Windows |
+|---|---|---|
+| Open the chat | Bar button | Tray icon next to the clock, or the floating bubble |
+| Ask about a screen region | Mod+Shift+A | **Win+Shift+A** |
+| Ask about selected text | Mod+Shift+X | **Win+Shift+X** (it quickly presses Ctrl+C for you, then puts your clipboard back) |
+| Settings | DMS Settings → Plugins | Right-click the tray icon → Settings… |
+| Chats are stored in | `~/.local/share/dux-ai` | `%LOCALAPPDATA%\dux-ai` |
+
+**Install** (Windows 10 1809+ or 11):
+
+1. Install **Python 3.11+** from [python.org](https://www.python.org/downloads/)
+   and tick *"Add python.exe to PATH"*.
+2. Get the code: `git clone https://github.com/Mateo1844/DUX-AI.git`, or on
+   GitHub use *Code → Download ZIP* and unzip it.
+3. In PowerShell, in the DUX-AI folder, run:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File windows\install.ps1
+   ```
+   This installs PySide6 and Pillow, installs Claude Code if it's missing,
+   adds DUX-AI to the Start menu and starts it.
+4. Log in to Claude Code once: open a new PowerShell window, run `claude`,
+   type `/login` and choose your Claude subscription.
+5. Right-click the tray icon → *Settings…* to turn on *Start with Windows*,
+   the floating bubble, or to change the shortcuts.
+
+**Notes:**
+- The tray icon may be hidden under the **^** arrow next to the clock. Drag it
+  onto the taskbar to keep it visible.
+- To show the full folder path in File Explorer's title (for "this folder"),
+  open *Folder Options → View* and tick *"Display the full path in the title
+  bar"*.
+- Git for Windows is optional. With it, agent mode runs commands in bash;
+  without it, in PowerShell.
+- Problems are written to `%LOCALAPPDATA%\dux-ai\windows-app.log`.
+
 ## How it works
 
 ```
@@ -109,7 +158,12 @@ To update later: `cd ~/DUX-AI && git pull && dms ipc call plugins reload duxAi`.
 ```
 
 - `DuxAI/DuxAIWidget.qml` is the UI only (one file, so `plugins reload` always picks up changes): the bar button, chat, history and
-  pickers.
+  pickers. The Windows app loads this same file.
+- `windows/` is the Windows app. `duxai_windows.pyw` handles the tray,
+  shortcuts, region selection and selected text. `shims.py` and `qml/` are
+  small stand-ins for the DMS/Quickshell parts the chat window uses, so the
+  QML runs unchanged. `fonts/DuxIcons.ttf` is a 10 KB copy of the icon font;
+  run `windows/tools/make_icon_font.py` after using a new icon name.
 - `DuxAI/backend/duxai.py` is plain Python with no required packages. It
   starts `claude`, streams the answer back, and saves, lists and deletes
   chats. It also takes screenshots, using `dms screenshot region`, or

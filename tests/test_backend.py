@@ -202,6 +202,28 @@ class BackendTest(unittest.TestCase):
         self.assertEqual([r["id"] for r in replies], [1, 2])
         self.assertEqual(replies[1]["result"]["tools"][0]["name"], "view_screen")
 
+    def test_stop_via_stdin(self):
+        """The Windows app stops an answer by writing {"stop": true} (no SIGTERM there)."""
+        env = dict(self.env, FAKE_CLAUDE_SLOW="1")
+        proc = subprocess.Popen([sys.executable, str(BACKEND), "ask", "--", "hi"], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, text=True, env=env)
+        events = []
+        for line in proc.stdout:
+            ev = json.loads(line)
+            events.append(ev)
+            if ev["type"] == "text":
+                proc.stdin.write(json.dumps({"stop": True}) + "\n")
+                proc.stdin.flush()
+        proc.wait(timeout=30)
+        self.assertTrue(events[-1].get("stopped"))
+        self.assertTrue(events[-1]["text"].startswith("Hello"))
+
+    def test_target_window_reaches_screen_tool(self):
+        self.run_backend("ask", "--screen", "--target-window=4242", "--", "what's this?")
+        argv = self.calls()[0]["argv"]
+        config = json.loads(argv[argv.index("--mcp-config") + 1])
+        self.assertEqual(config["mcpServers"]["duxai"]["env"]["DUXAI_TARGET_WINDOW"], "4242")
+
     def test_missing_claude(self):
         env = dict(self.env, PATH="/usr/bin:/bin")
         events = self.run_backend("ask", "--", "hi", env=env)

@@ -159,6 +159,13 @@ PluginSettings {
         defaultValue: ""
     }
 
+    ToggleSetting {
+        settingKey: "floatingBubble"
+        label: "Floating bubble"
+        description: "A small round button that floats above everything, also fullscreen video (handy during lectures). Drag it anywhere; click opens the chat, right-click asks about a screen region."
+        defaultValue: false
+    }
+
     SelectionSetting {
         settingKey: "pillColor"
         label: "Bar icon background"
