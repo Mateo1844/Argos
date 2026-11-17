@@ -35,7 +35,11 @@ from pathlib import Path
 
 # ---------------------------------------------------------------- paths ----
 
-DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "dux-ai"
+IS_WINDOWS = os.name == "nt"
+if IS_WINDOWS:   # C:\Users\<you>\AppData\Local\dux-ai
+    DATA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "dux-ai"
+else:            # ~/.local/share/dux-ai
+    DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "dux-ai"
 CHATS_DIR = DATA_DIR / "chats"      # one JSON file per chat
 IMAGES_DIR = DATA_DIR / "images"    # screenshots that were attached to chats
 WORK_DIR = DATA_DIR / "workdir"     # empty folder claude runs in (no CLAUDE.md, no git)
@@ -81,6 +85,13 @@ ALWAYS_DENY = ["Bash(sudo *)", "Bash(rm -rf *)", "Bash(rm -fr *)",
 MAX_QUOTE_CHARS = 20000
 
 LEAN_FLAGS = ["--strict-mcp-config", "--disable-slash-commands", "--safe-mode"]
+
+
+# Extra options for every subprocess: always UTF-8 (Windows would default to
+# an old code page) and, on Windows, no black console window popping up.
+SP = {"encoding": "utf-8", "errors": "replace"}
+if IS_WINDOWS:
+    SP["creationflags"] = 0x08000000   # CREATE_NO_WINDOW
 
 
 def emit(**obj):
@@ -217,10 +228,14 @@ def delete_chat(chat):
 # --------------------------------------------------------------- claude ----
 
 def find_claude():
+    native = Path.home() / ".local/bin/claude.exe"
+    if IS_WINDOWS and native.exists():
+        return str(native)   # the native installer; preferred over an npm "claude.cmd"
     found = shutil.which("claude")
     if found:
         return found
-    for guess in (Path.home() / ".local/bin/claude", Path.home() / ".claude/local/claude"):
+    for guess in (Path.home() / ".local/bin/claude", Path.home() / ".claude/local/claude",
+                  Path.home() / ".local/bin/claude.exe"):
         if guess.exists():
             return str(guess)
     return None
@@ -237,7 +252,7 @@ def supported_flags(claude):
     except (OSError, ValueError, KeyError):
         pass
     try:
-        help_text = subprocess.run([claude, "--help"], capture_output=True, text=True, timeout=20).stdout
+        help_text = subprocess.run([claude, "--help"], capture_output=True, text=True, **SP, timeout=20).stdout
     except (OSError, subprocess.SubprocessError):
         help_text = ""
     flags = [f for f in LEAN_FLAGS + ["--effort", "--tools", "--permission-prompt-tool"] if f in help_text]
@@ -248,10 +263,16 @@ def supported_flags(claude):
     return set(flags)
 
 
-def mcp_config():
-    """Our own tiny tool server (this script with `mcp`): gives Claude view_screen."""
-    return json.dumps({"mcpServers": {"duxai": {
-        "type": "stdio", "command": sys.executable, "args": [str(Path(__file__).resolve()), "mcp"]}}})
+def mcp_config(target_window=""):
+    """Our own tiny tool server (this script with `mcp`): gives Claude view_screen.
+
+    target_window (Windows): handle of the window the user was looking at, so a
+    screenshot shows that window and not the chat window in front of it.
+    """
+    server = {"type": "stdio", "command": sys.executable, "args": [str(Path(__file__).resolve()), "mcp"]}
+    if target_window:
+        server["env"] = {"DUXAI_TARGET_WINDOW": str(target_window)}
+    return json.dumps({"mcpServers": {"duxai": server}})
 
 
 def lean_env(screen):
@@ -264,7 +285,7 @@ def lean_env(screen):
     return env
 
 
-def build_command(claude, flags, model, effort, session_id, web, extra_prompt, screen=False):
+def build_command(claude, flags, model, effort, session_id, web, extra_prompt, screen=False, target_window=""):
     system = SYSTEM_PROMPT + ("\n\n" + SCREEN_PROMPT if screen else "")
     system += ("\n\n" + extra_prompt.strip() if extra_prompt.strip() else "")
     cmd = [
@@ -285,7 +306,7 @@ def build_command(claude, flags, model, effort, session_id, web, extra_prompt, s
     if allowed:
         cmd += ["--allowedTools", ",".join(allowed)]
     if screen:
-        cmd += ["--mcp-config", mcp_config()]
+        cmd += ["--mcp-config", mcp_config(target_window)]
     cmd += [f for f in LEAN_FLAGS if f in flags and not (screen and f == "--safe-mode")]
     if session_id:
         cmd += ["--resume", session_id]
@@ -331,7 +352,8 @@ def permission_rules(level, trusted, ask_dirs, deny_dirs, screen=False):
     return {"allow": allow, "ask": ask, "deny": deny}
 
 
-def build_agent_command(claude, flags, model, effort, session_id, extra_prompt, rules, screen=False):
+def build_agent_command(claude, flags, model, effort, session_id, extra_prompt, rules, screen=False,
+                        target_window=""):
     """Agent mode: Claude Code with its normal tools, your settings and MCP
     servers, and every permission question sent to us (shown as buttons)."""
     system = AGENT_PROMPT + ("\n\n" + SCREEN_PROMPT if screen else "")
@@ -351,7 +373,7 @@ def build_agent_command(claude, flags, model, effort, session_id, extra_prompt, 
     if "--effort" in flags and effort:
         cmd += ["--effort", effort]
     if screen:
-        cmd += ["--mcp-config", mcp_config()]
+        cmd += ["--mcp-config", mcp_config(target_window)]
     if session_id:
         cmd += ["--resume", session_id]
     return cmd
@@ -460,15 +482,15 @@ def cmd_ask(args):
     if args.agent:
         rules = permission_rules(args.perm, args.trusted, args.ask_dirs, args.deny_dirs, args.screen)
         cmd = build_agent_command(claude, flags, args.model, args.effort, session_id, args.extra, rules,
-                                  args.screen)
+                                  args.screen, args.target_window)
         cwd, env = Path.home(), None   # so "~/Downloads" etc. are inside its working folder
     else:
         cmd = build_command(claude, flags, args.model, args.effort, session_id, args.web, args.extra,
-                            args.screen)
+                            args.screen, args.target_window)
         cwd, env = WORK_DIR, lean_env(args.screen)
     errfile = tempfile.TemporaryFile(mode="w+")
     proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=errfile, text=True, bufsize=1)
+                            stderr=errfile, text=True, **SP, bufsize=1)
     write_lock = threading.Lock()
 
     def send_to_claude(obj):
@@ -479,13 +501,21 @@ def cmd_ask(args):
             except (BrokenPipeError, ValueError, OSError):
                 pass
 
-    # Allow/Deny clicks arrive on our stdin as {"id": ..., "allow": true}.
-    def answer_permissions():
+    # Messages from the widget arrive on our stdin, one JSON object per line:
+    #   {"id": ..., "allow": true/false}   answer to an Allow/Deny card
+    #   {"stop": true}                     stop button (used on Windows, which has no SIGTERM)
+    def read_widget_messages():
         for line in sys.stdin:
             try:
                 msg = json.loads(line)
+            except ValueError:
+                continue
+            if msg.get("stop"):
+                on_stop(None, None)
+                continue
+            try:
                 req = pending.pop(msg["id"])
-            except (ValueError, KeyError):
+            except KeyError:
                 continue
             if msg.get("allow"):
                 reply = {"behavior": "allow", "updatedInput": req}
@@ -495,17 +525,19 @@ def cmd_ask(args):
                             "response": {"subtype": "success", "request_id": msg["id"], "response": reply}})
 
     pending = {}   # request_id -> tool input
-    if args.agent:
-        threading.Thread(target=answer_permissions, daemon=True).start()
-
     stopped = False
 
     def on_stop(_sig, _frame):
-        # The widget's stop button kills us: stop claude too, keep partial answer.
+        # The widget's stop button: stop claude too, keep the partial answer.
         nonlocal stopped
         stopped = True
         if proc.poll() is None:
-            proc.send_signal(signal.SIGINT)
+            if IS_WINDOWS:
+                proc.terminate()
+            else:
+                proc.send_signal(signal.SIGINT)
+
+    threading.Thread(target=read_widget_messages, daemon=True).start()
 
     signal.signal(signal.SIGTERM, on_stop)
     signal.signal(signal.SIGINT, on_stop)
@@ -629,7 +661,7 @@ def cmd_capture(args):
         out = subprocess.run(
             ["dms", "screenshot", *mode, "--no-clipboard", "--no-notify",
              "--json", "-d", str(IMAGES_DIR), "--filename", name + ".png"],
-            capture_output=True, text=True)
+            capture_output=True, text=True, **SP)
         for line in out.stdout.splitlines():
             try:
                 meta = json.loads(line)
@@ -638,7 +670,7 @@ def cmd_capture(args):
             if meta.get("status") == "success" or meta.get("path"):
                 path = meta.get("path")
     elif shutil.which("grim") and shutil.which("slurp"):
-        geom = subprocess.run(["slurp"], capture_output=True, text=True)
+        geom = subprocess.run(["slurp"], capture_output=True, text=True, **SP)
         if geom.returncode == 0 and geom.stdout.strip():
             path = str(IMAGES_DIR / (name + ".png"))
             subprocess.run(["grim", "-g", geom.stdout.strip(), path])
@@ -658,11 +690,11 @@ def active_window():
     try:
         if shutil.which("niri"):
             out = subprocess.run(["niri", "msg", "--json", "focused-window"],
-                                 capture_output=True, text=True, timeout=3)
+                                 capture_output=True, text=True, **SP, timeout=3)
             win = json.loads(out.stdout or "null") or {}
             app, title = win.get("app_id") or "", win.get("title") or ""
         elif shutil.which("hyprctl"):
-            out = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=3)
+            out = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, **SP, timeout=3)
             win = json.loads(out.stdout or "{}") or {}
             app, title = win.get("class") or "", win.get("title") or ""
         else:
@@ -684,10 +716,14 @@ def take_screenshot(full=False):
     for old in sorted(folder.glob("*.png"))[:-9]:
         old.unlink(missing_ok=True)
     path = folder / time.strftime("screen-%Y%m%d-%H%M%S.png")
+    if IS_WINDOWS:
+        import winutil   # Windows-only helpers next to this file
+        hwnd = int(os.environ.get("DUXAI_TARGET_WINDOW") or 0) or None
+        return path if winutil.screenshot(path, hwnd, full) else None
     if shutil.which("dms"):
         out = subprocess.run(["dms", "screenshot", "full" if full else "window", "--no-clipboard",
                               "--no-notify", "--json", "-d", str(folder), "--filename", path.name],
-                             capture_output=True, text=True)
+                             capture_output=True, text=True, **SP)
         for line in out.stdout.splitlines():
             try:
                 meta = json.loads(line)
@@ -757,7 +793,7 @@ def cmd_selection(_args):
         return 1
     for extra in (["--primary"], []):
         out = subprocess.run(["wl-paste", "--no-newline", "--type", "text", *extra],
-                             capture_output=True, text=True, timeout=5)
+                             capture_output=True, text=True, **SP, timeout=5)
         if out.returncode == 0 and out.stdout.strip():
             emit(type="selection", text=out.stdout[:MAX_QUOTE_CHARS], primary=bool(extra))
             return 0
@@ -836,7 +872,7 @@ def cmd_title(args):
         WORK_DIR.mkdir(parents=True, exist_ok=True)
         try:
             out = subprocess.run(cmd, cwd=WORK_DIR, input=f"User: {first_user}\n\nAnswer: {first_answer}",
-                                 capture_output=True, text=True, timeout=45)
+                                 capture_output=True, text=True, **SP, timeout=45)
             if out.returncode == 0:
                 title = " ".join(out.stdout.split()).strip("\"'`. ")[:60]
         except (OSError, subprocess.SubprocessError):
@@ -874,6 +910,7 @@ def main(argv=None):
     ask.add_argument("--window", default="", help='active window, e.g. "Dolphin - ~/Downloads"')
     ask.add_argument("--agent", action="store_true", help="let Claude use your computer (asks first)")
     ask.add_argument("--screen", action="store_true", help="let Claude look at your screen when needed")
+    ask.add_argument("--target-window", default="", help="Windows: handle of the window to screenshot")
     ask.add_argument("--perm", default="ask_changes", choices=["ask_all", "ask_changes", "trusted"])
     ask.add_argument("--trusted", default="", help="agent: comma-separated folders it may edit freely")
     ask.add_argument("--ask-dirs", default="", help="agent: folders where edits always ask")

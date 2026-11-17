@@ -269,7 +269,8 @@ PluginComponent {
             anchors.centerIn: parent
             width: circle.size * circle.logoScale
             height: width
-            source: circle.hasLogo ? "file://" + circle.logoPath : ""
+            source: !circle.hasLogo || !circle.logoPath ? "" : (circle.logoPath.startsWith("/") ? "file://" + circle.logoPath
+                                                : "file:///" + circle.logoPath.replace(/\\/g, "/"))
             // Render the SVG at (about) the size it is shown, so it stays sharp:
             // shrinking a big render down to ~16 px makes it look pixelated.
             sourceSize: Qt.size(Math.ceil(width * 2), Math.ceil(height * 2))
@@ -289,7 +290,22 @@ PluginComponent {
     }
 
     // ------------------------------------------------------------ settings --
-    readonly property string backend: decodeURIComponent(String(Qt.resolvedUrl("backend/duxai.py")).replace("file://", ""))
+    readonly property string backend: localPath(Qt.resolvedUrl("backend/duxai.py"))
+
+    // Running inside the Windows app instead of DMS? (Its stand-in for
+    // PluginComponent has hostPlatform: "windows"; on DMS this is undefined.)
+    readonly property bool onWindows: root.hostPlatform === "windows"
+
+    // Path <-> file URL, for Linux (/home/..) and Windows (C:\Users\..) paths.
+    function fileUrl(path) {
+        if (!path)
+            return "";
+        return path.startsWith("/") ? "file://" + path : "file:///" + path.replace(/\\/g, "/");
+    }
+    function localPath(url) {
+        const p = decodeURIComponent(String(url).replace(/^file:\/\//, ""));
+        return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;   // "/C:/x" -> "C:/x"
+    }
     property string modelOverride: ""
     property string effortOverride: ""
     readonly property string model: modelOverride || pluginData.model || "sonnet"
@@ -297,6 +313,10 @@ PluginComponent {
     // Quick settings (gear in the chat header); also in the plugin settings page.
     property bool allowWeb: pluginData.allowWeb ?? false
     property bool screenViewer: pluginData.screenViewer ?? true   // Claude may look at the screen when needed
+    // Floating bubble: a small draggable button that stays on top (handy during lectures).
+    readonly property bool floatingBubble: pluginData.floatingBubble ?? false
+    property real bubbleRight: pluginData.bubbleRight ?? 24      // distance to the right screen edge
+    property real bubbleBottom: pluginData.bubbleBottom ?? 96    // distance to the bottom screen edge
 
     function setQuick(key, value) {
         if (key === "allowWeb")
@@ -798,6 +818,92 @@ PluginComponent {
         }
     }
 
+    // ------------------------------------------------------- floating bubble --
+    // Settings → "Floating bubble". Drag it anywhere; click = chat,
+    // right-click = ask about a screen region. Stays above fullscreen video.
+    PanelWindow {
+        id: bubble
+        visible: root.floatingBubble
+        screen: root.parentScreen ?? null
+        color: "transparent"
+        anchors { bottom: true; right: true }
+        margins { bottom: root.bubbleBottom; right: root.bubbleRight }
+        implicitWidth: 56
+        implicitHeight: 56
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.namespace: "dux-ai:bubble"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+        // Soft shadow so it stands out on any background.
+        Rectangle {
+            anchors.centerIn: parent
+            width: 48
+            height: 48
+            radius: 24
+            color: Qt.rgba(0, 0, 0, bubbleMouse.containsMouse ? 0.35 : 0.25)
+        }
+        LogoCircle {
+            id: bubbleCircle
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: -1
+            size: bubbleMouse.containsMouse ? 46 : 44
+            accent: root.accent
+            logoPath: root.logoPath
+            hasLogo: root.hasLogo
+            Behavior on size {
+                NumberAnimation { duration: 100 }
+            }
+            SequentialAnimation on opacity {
+                running: root.busy
+                loops: Animation.Infinite
+                onStopped: bubbleCircle.opacity = 1
+                NumberAnimation { to: 0.5; duration: 600; easing.type: Easing.InOutQuad }
+                NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutQuad }
+            }
+        }
+
+        MouseArea {
+            id: bubbleMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            cursorShape: dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+            property real pressX: 0
+            property real pressY: 0
+            property bool dragged: false
+
+            onPressed: mouse => {
+                pressX = mouse.x;
+                pressY = mouse.y;
+                dragged = false;
+            }
+            // The window follows the mouse: move it by how far the mouse moved
+            // inside it (margins count from the bottom-right corner).
+            onPositionChanged: mouse => {
+                if (!pressed || mouse.buttons !== Qt.LeftButton)
+                    return;
+                const dx = mouse.x - pressX, dy = mouse.y - pressY;
+                if (!dragged && Math.abs(dx) + Math.abs(dy) < 4)
+                    return;
+                dragged = true;
+                root.bubbleRight = Math.max(0, root.bubbleRight - dx);
+                root.bubbleBottom = Math.max(0, root.bubbleBottom - dy);
+            }
+            onReleased: mouse => {
+                if (dragged) {
+                    pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(root.bubbleRight));
+                    pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(root.bubbleBottom));
+                } else if (mouse.button === Qt.RightButton) {
+                    root.startCapture();
+                } else {
+                    root.triggerPopout();
+                }
+                dragged = false;
+            }
+        }
+    }
+
     // ------------------------------------------------------------ bar pill --
     // Just a round circle. Drop an SVG at assets/logo.svg to use your own
     // logo; otherwise a sparkle icon is shown.
@@ -1170,7 +1276,7 @@ PluginComponent {
                                             Image {
                                                 width: 36
                                                 height: 24
-                                                source: msg.image ? "file://" + msg.image : ""
+                                                source: root.fileUrl(msg.image)
                                                 sourceSize: Qt.size(72, 48)
                                                 fillMode: Image.PreserveAspectCrop
                                                 asynchronous: true
@@ -1187,7 +1293,7 @@ PluginComponent {
                                             anchors.fill: parent
                                             hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
-                                            onClicked: Qt.openUrlExternally("file://" + msg.image)
+                                            onClicked: Qt.openUrlExternally(root.fileUrl(msg.image))
                                         }
                                     }
 
@@ -1566,7 +1672,7 @@ PluginComponent {
                         height: 28
                         sourceSize: Qt.size(80, 56)
                         fillMode: Image.PreserveAspectCrop
-                        source: root.pendingImage ? "file://" + root.pendingImage : ""
+                        source: root.fileUrl(root.pendingImage)
                         asynchronous: true
                     }
                     StyledText {

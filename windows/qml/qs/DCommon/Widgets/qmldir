@@ -1,0 +1,4 @@
+module qs.DCommon.Widgets
+DIcon 1.0 DIcon.qml
+StyledText 1.0 StyledText.qml
+DSpinner 1.0 DSpinner.qml
