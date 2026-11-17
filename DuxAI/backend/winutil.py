@@ -1,4 +1,4 @@
-"""Windows-only helpers for DUX-AI, using only ctypes (no extra packages).
+"""Windows-only helpers for Argos, using only ctypes (no extra packages).
 
 Used by the backend (screenshots for the view_screen tool) and by the
 Windows app (active window, selected text, global hotkeys).
@@ -105,9 +105,94 @@ def window_info(hwnd):
     return {"app": app, "title": buf.value, "pid": pid.value}
 
 
+_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, HWND, wintypes.LPARAM)
+user32.EnumWindows.argtypes = [_WNDENUMPROC, wintypes.LPARAM]
+user32.IsWindowVisible.argtypes = [HWND]
+user32.ShowWindow.argtypes = [HWND, ctypes.c_int]
+
+
+def hide_windows_of(pid):
+    """Hide all visible windows of process `pid` (Argos itself, during a
+    screenshot). Returns them, for show_windows()."""
+    found = []
+
+    def callback(hwnd, _lparam):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            found.append(hwnd)
+        return True
+
+    user32.EnumWindows(_WNDENUMPROC(callback), 0)
+    for hwnd in found:
+        user32.ShowWindow(hwnd, 0)    # SW_HIDE
+    return found
+
+
+def show_windows(hwnds):
+    for hwnd in hwnds:
+        user32.ShowWindow(hwnd, 8)    # SW_SHOWNA: show again without taking focus
+
+
 def set_foreground(hwnd):
     if hwnd and user32.IsWindow(hwnd):
         user32.SetForegroundWindow(hwnd)
+
+
+# ------------------------------------------------------- taskbar identity --
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD),
+                ("Data4", ctypes.c_ubyte * 8)]
+
+    @classmethod
+    def parse(cls, text):
+        import uuid
+        u = uuid.UUID(text)
+        g = cls(u.time_low, u.time_mid, u.time_hi_version)
+        g.Data4[:] = list(u.bytes[8:])
+        return g
+
+
+class _PROPERTYKEY(ctypes.Structure):
+    _fields_ = [("fmtid", _GUID), ("pid", wintypes.DWORD)]
+
+
+class _PROPVARIANT(ctypes.Structure):   # only the "text" kind (VT_LPWSTR) is used here
+    _fields_ = [("vt", wintypes.USHORT), ("r1", wintypes.USHORT), ("r2", wintypes.USHORT),
+                ("r3", wintypes.USHORT), ("pwszVal", ctypes.c_wchar_p), ("pad", ctypes.c_void_p)]
+
+
+_APPUSERMODEL = "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}"
+_IID_IPROPERTYSTORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
+
+
+def set_taskbar_identity(hwnd, app_id, icon_path, display_name, relaunch_command):
+    """Give one window its own taskbar button identity + icon (like Chrome
+    profiles do). Without this, Windows shows the Python icon."""
+    shell32 = ctypes.WinDLL("shell32")
+    ole32 = ctypes.WinDLL("ole32")
+    ole32.CoInitialize(None)
+    store = ctypes.c_void_p()
+    iid = _GUID.parse(_IID_IPROPERTYSTORE)
+    hr = shell32.SHGetPropertyStoreForWindow(HWND(hwnd), ctypes.byref(iid), ctypes.byref(store))
+    if hr != 0 or not store:
+        return False
+    vtable = ctypes.cast(store, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+    set_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(_PROPERTYKEY),
+                                   ctypes.POINTER(_PROPVARIANT))(vtable[6])
+    commit = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtable[7])
+    release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtable[2])
+    try:
+        # RelaunchCommand (2), RelaunchIconResource (3), RelaunchDisplayNameResource (4), then ID (5)
+        for pid, value in ((2, relaunch_command), (3, f"{icon_path},0"), (4, display_name), (5, app_id)):
+            key = _PROPERTYKEY(_GUID.parse(_APPUSERMODEL), pid)
+            var = _PROPVARIANT(vt=31, pwszVal=value)   # 31 = VT_LPWSTR
+            set_value(store, ctypes.byref(key), ctypes.byref(var))
+        commit(store)
+    finally:
+        release(store)
+    return True
 
 
 # ------------------------------------------------------------ screenshots --

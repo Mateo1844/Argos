@@ -1,9 +1,9 @@
-# DUX-AI for Windows: one-time setup.
+# Argos for Windows: one-time setup.
 #
-# In PowerShell, from the DUX-AI folder:
+# In PowerShell, from the folder you cloned/downloaded (named DUX-AI):
 #     powershell -ExecutionPolicy Bypass -File windows\install.ps1
 #
-# It installs the Python packages, Claude Code (if missing), adds DUX-AI to
+# It installs the Python packages, Claude Code (if missing), adds Argos to
 # the Start menu and starts it. Nothing here needs administrator rights.
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +13,7 @@ $app = Join-Path $here "duxai_windows.pyw"
 function Ok($text)   { Write-Host "  [ok] $text" -ForegroundColor Green }
 function Warn($text) { Write-Host "  [!]  $text" -ForegroundColor Yellow }
 
-Write-Host "DUX-AI installer"
+Write-Host "Argos installer"
 
 # 1. Python (from python.org or the Microsoft Store)
 $python = (Get-Command python -ErrorAction SilentlyContinue).Source
@@ -26,11 +26,25 @@ if (-not $python) {
     exit 1
 }
 Ok "Python: $python"
-$pythonw = Join-Path (Split-Path $python) "pythonw.exe"
-if (-not (Test-Path $pythonw)) { $pythonw = $python }
 
-# 2. Python packages (PySide6 = the window toolkit, Pillow = screenshots)
-& $python -m pip install --user --upgrade --quiet -r (Join-Path $here "requirements.txt")
+# 2. Python packages (PySide6 = the window toolkit, Pillow = screenshots), in
+#    their own short folder: C:\Users\<you>\.duxai-venv. Python from the
+#    Microsoft Store otherwise puts packages in a folder so deep that PySide6
+#    hits Windows' 260-character path limit. No admin rights needed.
+$venv = Join-Path $env:USERPROFILE ".duxai-venv"
+if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
+    Write-Host "  Creating .venv (one time)..."
+    & $python -m venv $venv
+    if ($LASTEXITCODE -ne 0) { Warn "Could not create the .venv folder."; exit 1 }
+}
+$python = Join-Path $venv "Scripts\python.exe"
+$pythonw = Join-Path $venv "Scripts\pythonw.exe"
+Write-Host "  Installing PySide6 + Pillow (about 100 MB, takes a minute)..."
+& $python -m pip install --upgrade --quiet -r (Join-Path $here "requirements.txt")
+if ($LASTEXITCODE -ne 0) {
+    Warn "Installing the Python packages failed (see the error above)."
+    exit 1
+}
 Ok "Python packages installed"
 
 # 3. Claude Code
@@ -43,20 +57,27 @@ if ((Test-Path $claude) -or (Get-Command claude -ErrorAction SilentlyContinue)) 
     Ok "Claude Code installed"
 }
 
-# 4. Start menu shortcut (search "DUX-AI" in Start to launch it)
-$startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\DUX-AI.lnk"
+# 4. Start menu shortcut (search "Argos" in Start to launch it)
+$startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Argos.lnk"
+# (Argos used to be called DUX-AI: remove the old shortcut.)
+Remove-Item (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\DUX-AI.lnk") -ErrorAction SilentlyContinue
 $shell = New-Object -ComObject WScript.Shell
 $link = $shell.CreateShortcut($startMenu)
 $link.TargetPath = $pythonw
 $link.Arguments = "`"$app`""
 $link.WorkingDirectory = Split-Path $here
 $link.Description = "Claude in your tray"
+$ico = (& $python $app --write-icon 2>$null | Select-Object -Last 1)
+if ($ico -and (Test-Path $ico)) { $link.IconLocation = $ico }
 $link.Save()
 Ok "Start menu shortcut created"
 
 # 5. Start it
+# Quick check that the window toolkit really works before starting.
+& $python -c "import PySide6.QtQuick, PIL; print('ok')" | Out-Null
+if ($LASTEXITCODE -ne 0) { Warn "PySide6 doesn't load: see the error above."; exit 1 }
 Start-Process -FilePath $pythonw -ArgumentList "`"$app`""
-Ok "DUX-AI started: look for the orange icon next to the clock (maybe under the ^ arrow)"
+Ok "Argos started: look for the eye icon next to the clock (maybe under the ^ arrow)"
 
 Write-Host ""
 Write-Host "Next steps:"

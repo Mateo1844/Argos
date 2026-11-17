@@ -62,20 +62,43 @@ Item {
             showPopup();
     }
 
-    // (Not called "openPopout": DuxAIWidget.qml has its own function with that name.)
-    function showPopup() {
-        const area = dux.workArea();
+    // Screen area the chat is placed in (without the taskbar). Kept while it's open,
+    // so it can be placed again when its size changes.
+    property rect popupArea: Qt.rect(0, 0, 1920, 1040)
+
+    // Put the chat in place. Called again whenever its size changes (it grows
+    // with its content), so it never slides under the taskbar or over the bubble.
+    function placePopup() {
+        const area = popupArea;
+        const w = popup.width, h = popup.height, gap = 8;
+        const clampX = x => Math.min(Math.max(x, area.x), area.x + area.width - w);
+        const clampY = y => Math.min(Math.max(y, area.y), area.y + area.height - h);
         if (popupAnchor) {
-            // Next to the bubble: above it if there's room, otherwise below; inside the screen.
+            // Next to the bubble: above it, below it, or else beside it (never on top of it).
             const a = popupAnchor;
-            const above = a.y - popup.height - 8;
-            popup.x = Math.min(Math.max(a.x + a.size - popup.width, area.x), area.x + area.width - popup.width);
-            popup.y = above >= area.y ? above : Math.min(a.y + a.size + 8, area.y + area.height - popup.height);
+            if (a.y - gap - h >= area.y) {
+                popup.x = clampX(a.x + a.size - w);
+                popup.y = a.y - gap - h;
+            } else if (a.y + a.size + gap + h <= area.y + area.height) {
+                popup.x = clampX(a.x + a.size - w);
+                popup.y = a.y + a.size + gap;
+            } else {
+                const left = a.x - gap - w, right = a.x + a.size + gap;
+                popup.x = left >= area.x || right + w > area.x + area.width ? clampX(left) : right;
+                popup.y = clampY(a.y + a.size - h);
+            }
         } else {
             // Bottom-right of the screen with the mouse, just above the taskbar.
-            popup.x = area.x + area.width - popup.width - 12;
-            popup.y = area.y + area.height - popup.height - 12;
+            popup.x = area.x + area.width - w - 12;
+            popup.y = clampY(area.y + area.height - h - 12);
         }
+    }
+
+    // (Not called "openPopout": DuxAIWidget.qml has its own function with that name.)
+    function showPopup() {
+        popupArea = popupAnchor ? dux.workAreaAt(popupAnchor.x + popupAnchor.size / 2, popupAnchor.y + popupAnchor.size / 2)
+                                : dux.workArea();
+        placePopup();
         popup.visible = true;
         popup.raise();
         popup.requestActivate();
@@ -110,9 +133,14 @@ Item {
         flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         color: "transparent"
         width: base.popoutWidth
-        height: (content.item ? content.item.implicitHeight : base.popoutHeight) + 2 * pad
+        // Never taller than the screen (minus the taskbar).
+        height: Math.min((content.item ? content.item.implicitHeight : base.popoutHeight) + 2 * pad, base.popupArea.height - 16)
         visible: false
-        title: "DUX-AI"
+        title: "Argos"
+        // Placed again a moment after its size changes (the window system may
+        // otherwise keep the old position).
+        onHeightChanged: if (visible) Qt.callLater(base.placePopup)
+        onWidthChanged: if (visible) Qt.callLater(base.placePopup)
 
         // Like a flyout: clicking somewhere else closes it.
         onActiveChanged: {

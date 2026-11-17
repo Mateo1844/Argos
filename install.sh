@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the DUX-AI plugin into DankMaterialShell by symlinking it,
+# Installs the Argos plugin into DankMaterialShell by symlinking it,
 # so a later `git pull` updates the plugin automatically.
 set -euo pipefail
 
@@ -10,7 +10,7 @@ TARGET="$PLUGIN_DIR/DuxAI"
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 
-echo "DUX-AI installer"
+echo "Argos installer"
 
 command -v python3 >/dev/null && ok "python3 found" || { warn "python3 is missing (sudo dnf install python3)"; exit 1; }
 command -v dms >/dev/null && ok "dms found" || warn "dms command not found – is DankMaterialShell installed?"
@@ -45,7 +45,7 @@ fi
 cat <<'EOF'
 
 Next steps:
-  1. DMS Settings → Dank Bar → add the "DUX-AI" widget to your top bar.
+  1. DMS Settings → Dank Bar → add the "Argos" widget to your top bar.
   2. Keyboard shortcut: add this inside the binds { } block of ~/.config/niri/config.kdl
 
      Mod+Shift+A hotkey-overlay-title="Ask Claude about screen" { spawn "dms" "ipc" "call" "widget" "openWith" "duxAi" "capture"; }

@@ -154,7 +154,7 @@ class Toplevel(QObject):
 @QmlElement
 @QmlSingleton
 class ToplevelManager(QObject):
-    """activeToplevel = the last window you used that isn't DUX-AI itself
+    """activeToplevel = the last window you used that isn't Argos itself
     (kept up to date by the app's window tracker)."""
 
     activeToplevelChanged = Signal()

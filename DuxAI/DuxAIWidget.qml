@@ -1,4 +1,4 @@
-// DUX-AI: Claude in the DankMaterialShell top bar.
+// Argos: Claude in the DankMaterialShell top bar.
 //
 // This file is only UI. Everything else (talking to Claude, saving chats,
 // screenshots) is done by backend/duxai.py, which we run as a process and
@@ -264,7 +264,8 @@ PluginComponent {
             anchors.centerIn: parent
             anchors.verticalCenterOffset: -1
             size: face.hovered ? 46 : 44
-            accent: root.accent
+            accent: root.pillTransparent ? "transparent" : root.accent   // same style as the bar icon
+            logoScale: root.pillTransparent ? 0.75 : 0.62
             logoPath: root.logoPath
             hasLogo: root.hasLogo
             Behavior on size {
@@ -351,12 +352,33 @@ PluginComponent {
     property real bubbleRight: pluginData.bubbleRight ?? 24      // distance to the right screen edge
     property real bubbleBottom: pluginData.bubbleBottom ?? 96    // distance to the bottom screen edge
     readonly property int bubbleSize: 56
-    // Keep the bubble on the screen (also fixes a saved position that's off-screen).
+    // Which monitor the bubble is on (by name; drag it to another monitor to move it there).
+    property string bubbleScreenName: pluginData.bubbleScreen ?? ""
+    readonly property var allScreens: (root.onWindows ? Qt.application.screens : Quickshell.screens) ?? []
+    readonly property var bubbleScreen: {
+        for (const s of allScreens)
+            if (s.name === bubbleScreenName)
+                return s;
+        return root.parentScreen;    // not set yet, or that monitor is unplugged
+    }
+    // Position + size of a screen on the whole desktop (Quickshell: x/y, Qt: virtualX/virtualY).
+    function screenRect(s) {
+        return { x: s?.x ?? s?.virtualX ?? 0, y: s?.y ?? s?.virtualY ?? 0, w: s?.width ?? 1920, h: s?.height ?? 1080 };
+    }
+    function screenAt(x, y) {
+        for (const s of allScreens) {
+            const r = screenRect(s);
+            if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h)
+                return s;
+        }
+        return null;
+    }
+    // Keep the bubble on its screen (also fixes a saved position that's off-screen).
     function clampRight(v) {
-        return Math.min(Math.max(v, 0), (root.parentScreen?.width ?? 1920) - bubbleSize);
+        return Math.min(Math.max(v, 0), screenRect(bubbleScreen).w - bubbleSize);
     }
     function clampBottom(v) {
-        return Math.min(Math.max(v, 0), (root.parentScreen?.height ?? 1080) - bubbleSize);
+        return Math.min(Math.max(v, 0), screenRect(bubbleScreen).h - bubbleSize);
     }
 
     function setQuick(key, value) {
@@ -377,7 +399,8 @@ PluginComponent {
     readonly property string askFolders: pluginData.askFolders || ""
     readonly property string denyFolders: pluginData.denyFolders || ""
     readonly property bool useThemeColor: pluginData.pillColor === "theme"
-    readonly property color accent: useThemeColor ? Theme.primary : "#D97757"
+    // "Theme accent": DMS's theme colour, or Windows' accent colour.
+    readonly property color accent: useThemeColor ? (Theme.systemAccent ?? Theme.primary) : "#D97757"
     readonly property bool pillTransparent: pluginData.pillColor === "transparent"
     readonly property bool showBorder: pluginData.showBorder ?? true
 
@@ -529,6 +552,37 @@ PluginComponent {
         focusTimer.restart();
     }
 
+    // While Claude takes a screenshot (screen viewer), our windows step aside.
+    property bool hidingForScreenshot: false
+    property var shownBeforeScreenshot: null
+
+    function hideForScreenshot() {
+        shownBeforeScreenshot = { popout: root.interactionActive, bubbleChat: bubbleChatOpen };
+        hidingForScreenshot = true;
+        bubbleChatOpen = false;
+        if (root.interactionActive)
+            root.closePopout();
+    }
+
+    function restoreAfterScreenshot() {
+        hidingForScreenshot = false;        // bubble back first, the chat right after
+        reopenTimer.restart();
+    }
+
+    Timer {
+        id: reopenTimer
+        interval: 60
+        onTriggered: {
+            const was = root.shownBeforeScreenshot || {};
+            root.shownBeforeScreenshot = null;
+            if (was.bubbleChat)
+                root.bubbleChatOpen = true;
+            else if (was.popout && !root.interactionActive)
+                root.triggerPopout();
+            focusTimer.restart();
+        }
+    }
+
     function openBubbleChat() {
         if (root.onWindows && typeof root.showPopupNear === "function")
             root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, true);   // Windows: normal popup, next to the bubble
@@ -549,6 +603,10 @@ PluginComponent {
             startCapture();
         else if (mode === "text")
             grabSelection();
+        else if (mode === "screenshot-hide")
+            hideForScreenshot();
+        else if (mode === "screenshot-restore")
+            restoreAfterScreenshot();
         else
             openPopout();
     }
@@ -577,7 +635,7 @@ PluginComponent {
                 root.pendingImage = ev.path;
                 root.view = "chat";
             } else if (ev?.type === "error") {
-                ToastService.showError("DUX-AI: " + ev.message);
+                ToastService.showError("Argos: " + ev.message);
             }
             root.openPopout();
         })
@@ -593,7 +651,7 @@ PluginComponent {
                 root.pendingQuote = ev.text;
                 root.view = "chat";
             } else if (ev?.type === "error") {
-                ToastService.showError("DUX-AI: " + ev.message);
+                ToastService.showError("Argos: " + ev.message);
             }
             root.openPopout();
         });
@@ -836,15 +894,26 @@ PluginComponent {
     }
 
     // ------------------------------------------------- permission popup --
-    // Small Allow/Deny card under the bar, shown only while Claude waits for
-    // approval and the chat window is closed. Opening the chat hides it.
+    // Small Allow/Deny card, shown only while Claude waits for approval and the
+    // chat window is closed. Opening the chat hides it.
+    // DMS: under the bar. Windows: next to the floating bubble if it's on,
+    // otherwise bottom-right, just above the tray.
     PanelWindow {
         id: permPopup
+        readonly property bool nearBubble: root.onWindows && root.floatingBubble
+        readonly property real bubbleTop: bubble.margins.bottom + root.bubbleSize
+        readonly property bool roomAbove: bubbleTop + 8 + permBox.implicitHeight <= root.screenRect(root.bubbleScreen).h
         visible: root.permission !== null && !root.chatVisible
-        screen: root.parentScreen ?? null
+        screen: (nearBubble ? root.bubbleScreen : root.parentScreen) ?? null
         color: "transparent"
-        anchors { top: true; right: true }
-        margins { top: root.barThickness + 8; right: 12 }
+        anchors { top: !root.onWindows; bottom: root.onWindows; right: true }
+        margins {
+            top: root.barThickness + 8
+            right: permPopup.nearBubble ? bubble.margins.right : 12
+            bottom: !permPopup.nearBubble ? 12
+                  : permPopup.roomAbove ? permPopup.bubbleTop + 8
+                  : bubble.margins.bottom - 8 - permBox.implicitHeight
+        }
         implicitWidth: 340
         implicitHeight: permBox.implicitHeight
         exclusionMode: ExclusionMode.Ignore
@@ -925,8 +994,8 @@ PluginComponent {
     // moment later, so mouse positions are measured from the wrong place.
     PanelWindow {
         id: bubble
-        visible: root.floatingBubble
-        screen: root.parentScreen ?? null
+        visible: root.floatingBubble && !root.hidingForScreenshot
+        screen: root.bubbleScreen ?? null
         color: "transparent"
         anchors { bottom: true; right: true }
         margins { bottom: root.clampBottom(root.bubbleBottom); right: root.clampRight(root.bubbleRight) }
@@ -953,8 +1022,9 @@ PluginComponent {
             property real pressY: 0
             property real startRight: 0
             property real startBottom: 0
-            property real targetRight: 0
-            property real targetBottom: 0
+            // Where the bubble copy is during a drag, on the whole desktop (all monitors).
+            property real ghostX: 0
+            property real ghostY: 0
             property bool dragged: false
 
             onPressed: mouse => {
@@ -972,15 +1042,30 @@ PluginComponent {
                     return;
                 dragged = true;
                 // The bubble doesn't move during the drag, so this is exact.
-                targetRight = root.clampRight(startRight - dx);
-                targetBottom = root.clampBottom(startBottom - dy);
+                const from = root.screenRect(root.bubbleScreen);
+                const x = from.x + from.w - startRight - root.bubbleSize + dx;
+                const y = from.y + from.h - startBottom - root.bubbleSize + dy;
+                // Keep it on the monitor under the mouse (or the one it's on).
+                const r = root.screenRect(root.screenAt(x + root.bubbleSize / 2, y + root.bubbleSize / 2) ?? root.bubbleScreen);
+                ghostX = Math.min(Math.max(x, r.x), r.x + r.w - root.bubbleSize);
+                ghostY = Math.min(Math.max(y, r.y), r.y + r.h - root.bubbleSize);
             }
+
             function finishDrag() {
-                root.bubbleRight = targetRight;
-                root.bubbleBottom = targetBottom;
-                pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(targetRight));
-                pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(targetBottom));
+                // Where did it land? Maybe on another monitor.
+                const target = root.screenAt(ghostX + root.bubbleSize / 2, ghostY + root.bubbleSize / 2) ?? root.bubbleScreen;
+                const to = root.screenRect(target);
+                root.bubbleScreenName = target?.name ?? "";
+                root.bubbleRight = root.clampRight(to.x + to.w - ghostX - root.bubbleSize);
+                root.bubbleBottom = root.clampBottom(to.y + to.h - ghostY - root.bubbleSize);
+                if (target?.name)
+                    pluginService?.savePluginData("duxAi", "bubbleScreen", target.name);
+                pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(root.bubbleRight));
+                pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(root.bubbleBottom));
                 dragged = false;
+                // Windows: an open chat follows the bubble (on DMS it's tied to it already).
+                if (root.onWindows && root.interactionActive && root.popupAnchor)
+                    Qt.callLater(() => root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, true));
             }
             // If the system takes the mouse away mid-drag, still put the bubble where it was.
             onCanceled: {
@@ -1007,16 +1092,32 @@ PluginComponent {
     PanelWindow {
         id: bubbleChat
         visible: root.bubbleChatOpen && !root.onWindows
-        screen: root.parentScreen ?? null
+        screen: root.bubbleScreen ?? null
         color: "transparent"
         anchors { bottom: true; right: true }
         readonly property real pad: PopoutMetrics.contentPadding
-        readonly property real chatHeight: (chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad
-        readonly property real bubbleTop: bubble.margins.bottom + root.bubbleSize   // distance from the screen bottom
-        readonly property bool roomAbove: bubbleTop + 8 + chatHeight <= (root.parentScreen?.height ?? 1080)
+        readonly property var area: root.screenRect(root.bubbleScreen)
+        // Never taller than the screen.
+        readonly property real chatHeight: Math.min((chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad, area.h - 16)
+        // Everything in "distance from the right / bottom screen edge", like the margins.
+        readonly property real bR: bubble.margins.right
+        readonly property real bB: bubble.margins.bottom
+        readonly property real gap: 8
+        // Next to the bubble: above it, below it, or else beside it (never on top of it).
+        readonly property string side: bB + root.bubbleSize + gap + chatHeight <= area.h ? "above"
+                                       : bB - gap - chatHeight >= 0 ? "below"
+                                       : bR + root.bubbleSize + gap + root.popoutWidth <= area.w || bR - gap - root.popoutWidth < 0 ? "left"
+                                       : "right"
+        function clamp(v, max) {
+            return Math.min(Math.max(v, 0), Math.max(0, max));
+        }
         margins {
-            right: Math.min(bubble.margins.right, Math.max(0, (root.parentScreen?.width ?? 1920) - root.popoutWidth))
-            bottom: bubbleChat.roomAbove ? bubbleChat.bubbleTop + 8 : Math.max(0, bubble.margins.bottom - bubbleChat.chatHeight - 8)
+            right: bubbleChat.side === "left" ? bubbleChat.clamp(bubbleChat.bR + root.bubbleSize + bubbleChat.gap, bubbleChat.area.w - root.popoutWidth)
+                 : bubbleChat.side === "right" ? bubbleChat.bR - bubbleChat.gap - root.popoutWidth
+                 : bubbleChat.clamp(bubbleChat.bR, bubbleChat.area.w - root.popoutWidth)
+            bottom: bubbleChat.side === "above" ? bubbleChat.bB + root.bubbleSize + bubbleChat.gap
+                  : bubbleChat.side === "below" ? bubbleChat.bB - bubbleChat.gap - bubbleChat.chatHeight
+                  : bubbleChat.clamp(bubbleChat.bB, bubbleChat.area.h - bubbleChat.chatHeight)
         }
         implicitWidth: root.popoutWidth
         implicitHeight: chatHeight
@@ -1044,28 +1145,36 @@ PluginComponent {
         }
     }
 
-    // Full-screen, click-through layer that only shows the bubble copy while
-    // dragging. It exists as long as the bubble does (empty otherwise): a new
-    // window appearing mid-drag would take the mouse away from the bubble.
-    PanelWindow {
-        id: dragLayer
-        visible: root.floatingBubble
-        screen: root.parentScreen ?? null
-        color: "transparent"
-        anchors { top: true; bottom: true; left: true; right: true }
-        exclusionMode: ExclusionMode.Ignore
-        mask: Region {}
-        WlrLayershell.namespace: "dux-ai:bubble-drag"
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    // A full-screen, click-through layer on every monitor that only shows the
+    // bubble copy while dragging (so you can drag it to another monitor). They
+    // exist as long as the bubble does (empty otherwise): a new window
+    // appearing mid-drag would take the mouse away from the bubble.
+    Instantiator {
+        model: root.floatingBubble ? root.allScreens : []
 
-        BubbleFace {
-            visible: bubbleMouse.dragged
-            width: root.bubbleSize
-            height: root.bubbleSize
-            x: dragLayer.width - bubbleMouse.targetRight - root.bubbleSize
-            y: dragLayer.height - bubbleMouse.targetBottom - root.bubbleSize
-            hovered: true
+        delegate: PanelWindow {
+            id: dragLayer
+            required property var modelData
+            readonly property var area: root.screenRect(modelData)
+            visible: true
+            screen: modelData
+            color: "transparent"
+            anchors { top: true; bottom: true; left: true; right: true }
+            exclusionMode: ExclusionMode.Ignore
+            mask: Region {}
+            WlrLayershell.namespace: "dux-ai:bubble-drag"
+            WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+            BubbleFace {
+                visible: bubbleMouse.dragged
+                width: root.bubbleSize
+                height: root.bubbleSize
+                // Desktop position -> position on this monitor (off-window = not drawn here).
+                x: bubbleMouse.ghostX - dragLayer.area.x
+                y: bubbleMouse.ghostY - dragLayer.area.y
+                hovered: true
+            }
         }
     }
 
@@ -1369,6 +1478,34 @@ PluginComponent {
                         // New content (e.g. your message after sending): same.
                         onContentHeightChanged: if (root.followEnd) Qt.callLater(() => chatList.snapToEnd())
                         flickDeceleration: 2200
+
+                        // Mouse wheel: handled here so following stops on the very first click.
+                        // (Qt's own wheel scrolling reports "movement" a bit late; meanwhile the
+                        // list re-measures messages above you and following pulled you back down.)
+                        WheelHandler {
+                            id: mouseScroll
+                            acceptedDevices: PointerDevice.Mouse
+                            property real target: 0
+                            onWheel: event => {
+                                root.followEnd = false;
+                                const minY = chatList.originY - chatList.topMargin;
+                                const maxY = Math.max(minY, chatList.originY + chatList.contentHeight + chatList.bottomMargin - chatList.height);
+                                const from = wheelAnim.running ? target : chatList.contentY;
+                                target = Math.max(minY, Math.min(maxY, from - event.angleDelta.y / 120 * 72));
+                                wheelAnim.stop();
+                                wheelAnim.to = target;
+                                wheelAnim.start();
+                                if (target >= maxY - 1)
+                                    root.followEnd = true;     // scrolled back to the bottom: follow again
+                            }
+                        }
+                        NumberAnimation {
+                            id: wheelAnim
+                            target: chatList
+                            property: "contentY"
+                            duration: 120
+                            easing.type: Easing.OutCubic
+                        }
 
                         // Touchpad scrolling with momentum. Wayland only sends the finger movement,
                         // so when the fingers lift we measure the speed and let the list coast.

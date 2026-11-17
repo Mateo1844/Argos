@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Argos (temporary logo): Odysseus' faithful old hound, in profile. -->
+  <path d="M17 55 V31 Q17 17 31 17 Q37 17 41 22 L53 29 Q57 33 53 37 L43 37 Q38 44 38 55 Z" fill="#D97757"/>
+  <path d="M21 21 Q31 17 31 27 L29 40 Q24 43 21 38 Z" fill="#A9533A"/>
+  <circle cx="38" cy="27" r="2.3" fill="#1C1B1F"/>
+</svg>

@@ -1,227 +1,257 @@
-# Argos
+<p align="center">
+  <img src="DuxAI/assets/argos.svg" width="96" alt="Argos logo">
+</p>
 
-Claude in your Dux Shell top bar. A small round button opens a chat
-window. You pick the model and thinking level, select part of your screen and
-ask about it, and browse or delete old chats.
+<h1 align="center">Argos</h1>
 
-It runs on the **Claude Code CLI**, so it uses your Claude **Pro/Max
-subscription**. You don't need an API key.
+<p align="center">
+  <b>Claude, one click away, on Linux and Windows.</b><br>
+  Ask about anything on your screen, let Claude look over your shoulder, and keep it all on your Claude subscription.
+</p>
 
-There are two versions, and they share the same chat window and backend:
+<p align="center">
+  <a href="#install-on-linux-dankmaterialshell">Linux (DMS)</a> ·
+  <a href="#install-on-windows">Windows</a> ·
+  <a href="#using-argos">Using Argos</a> ·
+  <a href="#agent-mode">Agent mode</a> ·
+  <a href="#settings">Settings</a> ·
+  <a href="#how-it-works">How it works</a>
+</p>
 
-- **Linux:** a DankMaterialShell bar widget (below).
-- **Windows:** a tray app, see [Windows](#windows).
+---
 
-## Features (v0.1)
+Argos is a small assistant that lives in your **top bar** (DankMaterialShell on Linux) or your
+**system tray** (Windows). Click the round Claude button, or press a shortcut, and a chat window opens.
+Select part of your screen or some text, and Claude answers with that in view.
 
-- **Bar button:** a round circle in the bar. Left-click opens the chat. Right-click
-  starts a screen selection.
-- **Chat:** answers stream in token by token and render as Markdown. You can
-  select and copy text. Enter sends, Shift+Enter adds a new line, the stop
-  button cancels.
-- **Model and thinking pickers:** Sonnet, Opus or Haiku, and thinking level
-  low → max (Claude Code's `--effort`).
-- **Ask about your screen:** the camera-frame button, right-click, or
-  **Mod+Shift+A** opens a region selector. After you select, the chat opens
-  with the screenshot attached.
-- **Ask about selected text:** highlight text anywhere (a PDF, a website, a
-  terminal), then press **Mod+Shift+X** or the quote button in the chat. The
-  text is attached as a quote. Needs `wl-clipboard`.
-- **Token counter:** a small grey number next to the pickers shows how many
-  tokens the current chat has used. Hover it to see the last answer's tokens
-  (input, how much of it was cached, output).
-- **Floating bubble** (setting): a small draggable round button that stays
-  on top of everything, including fullscreen video, which is handy during
-  lectures. Click opens the chat right next to the bubble, above the video;
-  Esc or another click closes it. Right-click asks about a screen region.
-- **History page:** open, continue or delete old chats. The bottom of the page
-  shows how much disk space saved chats use.
+It runs on the **Claude Code CLI**, so it uses your Claude **Pro or Max subscription**.
+You don't need an API key.
 
-## Agent mode (Claude uses your PC)
+## Features
 
-Turn on the **Agent** chip next to the pickers. Claude can then read files and
-run commands on your computer, using your normal Claude Code setup (your
-settings, permissions and MCP servers). Its prompt runs in your home folder.
+|   |   |
+|---|---|
+| 💬 **Chat** | Answers stream in as Markdown. Pick the model (Sonnet, Opus, Haiku) and how hard Claude thinks (low → max). |
+| 🖼️ **Ask about your screen** | Draw a box around anything (a slide, a graph, an error) and ask about it. |
+| ❝ **Ask about selected text** | Highlight text in any app, press a shortcut, and it's quoted in the chat. |
+| 👀 **Screen viewer** | Ask "what does this mean?" without selecting anything: Claude looks at your active window by itself. |
+| 🧭 **Knows where you are** | Argos tells Claude which app and window you're in, so "this folder" or "this file" just works. |
+| 🫧 **Floating bubble** | A draggable button that stays on top of everything, even fullscreen video, on any monitor. Handy during lectures. |
+| 🛠️ **Agent mode** | Claude can read files and run commands for you, and asks before it changes anything. |
+| 🗂️ **History** | Continue or delete old chats, and see how much disk space they use. |
+| 🪙 **Light on tokens** | A short system prompt, no tools unless needed, and shrunk screenshots. A token counter shows usage. |
 
-- **It asks before changing anything.** An *Allow / Deny* card shows the
-  exact command or file. Every action Claude takes is listed as a small grey
-  step above its answer.
-- **Permission level** (Settings): *Ask for everything*, *Ask for changes*
-  (default), or *Trusted folders* (free edits only inside folders you list).
-- **Folder lists:** *Always ask for these folders* and *Never touch these
-  folders*. The order of precedence is deny > ask > allow.
-- **Always blocked:** `sudo`, `rm -rf`, `~/.ssh` and `~/.gnupg`, whatever you
-  click.
-- **Seeing your screen:** with the screen viewer on, the agent can look at
-  your screen without asking (except at the *Ask for everything* level).
-- **Cost:** it uses more tokens than the normal chat, because Claude Code's
-  tools and instructions are sent along. Normal chat stays lean.
+Both versions share the same chat window, backend and features. Only the way you open them differs.
 
-The folder rules cover Claude's file tools. A shell command could still touch
-a file, so every command that changes something asks first and shows the full
-command. Keep backups of important work anyway.
+---
 
-## Active window and screen viewer
+## Install on Linux (DankMaterialShell)
 
-- **Active window:** DUX-AI quietly sends along which app and window title you
-  were looking at (about 20 tokens). That's how "rename the files in this
-  folder" or "explain this file" works. In Dolphin, turn on *Configure Dolphin →
-  Interface → Show the full path inside the title bar* to send the full path.
-- **Screen viewer:** when you ask about something on screen that you didn't
-  select, Claude can take a screenshot of your active window by itself and
-  look at it. This works in normal chat and in agent mode. It happens through
-  a small built-in tool, so no command or Allow/Deny card shows up. The
-  chat only says "Looking at your screen…" while it happens.
-- **Gear button in the chat:** quick switches for *Web search* and *Screen
-  viewer*. The same options are in the plugin settings.
-
-## Install (Fedora + niri + DMS)
+Tested on Fedora with niri and [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell).
 
 ```bash
-# 1. Claude Code (skip if you already have it), then log in once
+# 1. Claude Code (skip if you have it), then log in once
 curl -fsSL https://claude.ai/install.sh | bash
-claude            # type /login, choose your Claude subscription, then /exit
+claude                     # type /login, choose your Claude subscription, then /exit
 
-# 2. This plugin
-git clone https://github.com/Mateo1844/DUX-AI.git ~/DUX-AI
-cd ~/DUX-AI && ./install.sh
+# 2. Argos
+git clone https://github.com/Mateo1844/Argos.git ~/Argos
+cd ~/Argos && ./install.sh
 
-# 3. wl-clipboard for selected text; Pillow (optional) shrinks big screenshots
+# 3. Needed for selected text; Pillow (optional) shrinks big screenshots
 sudo dnf install wl-clipboard python3-pillow
 ```
 
 Then:
 
-1. **DMS Settings → Plugins:** enable **DUX-AI** (press scan/refresh if you
-   don't see it).
-2. **DMS Settings → Dank Bar:** add the **DUX-AI** widget to your bar.
-3. **Keyboard shortcut:** add this inside `binds { }` in
-   `~/.config/niri/config.kdl`:
+1. **DMS Settings → Plugins:** enable **Argos**. Press scan/refresh if it isn't listed.
+2. **DMS Settings → Dank Bar:** add the **Argos** widget to your bar.
+3. **Shortcuts:** add these inside `binds { }` in `~/.config/niri/config.kdl`:
 
    ```kdl
    Mod+Shift+A hotkey-overlay-title="Ask Claude about screen" { spawn "dms" "ipc" "call" "widget" "openWith" "duxAi" "capture"; }
    Mod+Shift+X hotkey-overlay-title="Ask Claude about selected text" { spawn "dms" "ipc" "call" "widget" "openWith" "duxAi" "text"; }
    ```
 
-   `Mod+A` is already the DMS Control Center, so the shortcut uses
-   `Mod+Shift+A`. To only open the chat, use
-   `spawn "dms" "ipc" "call" "widget" "toggle" "duxAi"`.
+   To just open or close the chat, use `spawn "dms" "ipc" "call" "widget" "toggle" "duxAi"`.
 
-To update later: `cd ~/DUX-AI && git pull && dms ipc call plugins reload duxAi`.
+<details>
+<summary>Other distros (Arch, …)</summary>
 
-## Windows
+Everything works the same, but use your own package manager for `wl-clipboard` and Pillow
+(`python-pillow` on Arch). The plugin only needs Python 3, DMS and Claude Code.
+</details>
 
-The Windows version is a tray app with the same chat window, history, agent
-mode, screen viewer and settings.
+## Install on Windows
 
-| | Linux (DMS) | Windows |
-|---|---|---|
-| Open the chat | Bar button | Tray icon next to the clock, or the floating bubble |
-| Ask about a screen region | Mod+Shift+A | **Win+Shift+A** |
-| Ask about selected text | Mod+Shift+X | **Win+Shift+X** (it quickly presses Ctrl+C for you, then puts your clipboard back) |
-| Settings | DMS Settings → Plugins | Right-click the tray icon → Settings… |
-| Chats are stored in | `~/.local/share/dux-ai` | `%LOCALAPPDATA%\dux-ai` |
+Works on Windows 10 (1809 or newer) and Windows 11.
 
-**Install** (Windows 10 1809+ or 11):
+1. Install **Python 3.11+** from [python.org](https://www.python.org/downloads/) and tick
+   **"Add python.exe to PATH"**. Python from the Microsoft Store also works.
+2. Download Argos with `git clone https://github.com/Mateo1844/Argos.git`, or on GitHub use
+   **Code → Download ZIP** and unzip it.
+3. Open **PowerShell** in that folder and run:
 
-1. Install **Python 3.11+** from [python.org](https://www.python.org/downloads/)
-   and tick *"Add python.exe to PATH"*.
-2. Get the code: `git clone https://github.com/Mateo1844/DUX-AI.git`, or on
-   GitHub use *Code → Download ZIP* and unzip it.
-3. In PowerShell, in the DUX-AI folder, run:
    ```powershell
    powershell -ExecutionPolicy Bypass -File windows\install.ps1
    ```
-   This installs PySide6 and Pillow, installs Claude Code if it's missing,
-   adds DUX-AI to the Start menu and starts it.
-4. Log in to Claude Code once: open a new PowerShell window, run `claude`,
-   type `/login` and choose your Claude subscription.
-5. Right-click the tray icon → *Settings…* to turn on *Start with Windows*,
-   the floating bubble, or to change the shortcuts.
 
-**Notes:**
-- The tray icon may be hidden under the **^** arrow next to the clock. Drag it
-  onto the taskbar to keep it visible.
-- To show the full folder path in File Explorer's title (for "this folder"),
-  open *Folder Options → View* and tick *"Display the full path in the title
-  bar"*.
-- Git for Windows is optional. With it, agent mode runs commands in bash;
-  without it, in PowerShell.
-- Problems are written to `%LOCALAPPDATA%\dux-ai\windows-app.log`.
+   This installs what Argos needs (PySide6, Pillow, and Claude Code if it's missing), adds
+   **Argos** to the Start menu, and starts it.
+4. Log in to Claude Code once: open a new PowerShell window, run `claude`, type `/login` and
+   choose your Claude subscription.
+5. Right-click the tray icon → **Settings…** to turn on *Start with Windows*, the floating
+   bubble, or to change the shortcuts.
+
+> The tray icon may be hidden under the **^** arrow next to the clock. Drag it onto the
+> taskbar to keep it visible.
+
+---
+
+## Using Argos
+
+| | Linux (DMS) | Windows |
+|---|---|---|
+| **Open the chat** | Click the bar button | Click the tray icon (or set a shortcut in Settings) |
+| **Ask about a screen region** | `Mod+Shift+A`, right-click the bar button, or ⛶ in the chat | `Win+Shift+A`, or ⛶ in the chat |
+| **Ask about selected text** | `Mod+Shift+X`, or ❝ in the chat | `Win+Shift+X`, or ❝ in the chat |
+| **Floating bubble** | Click: chat · Right-click: screen region · Drag: move it, also to another monitor | same |
+| **Settings** | ⚙ in the chat, or DMS Settings → Plugins → Argos | ⚙ in the chat, or tray icon → Settings… |
+
+In the chat, **Enter** sends, **Shift+Enter** adds a new line, and the stop button cancels an
+answer. Selecting another region for a follow-up question just works; the old one doesn't come back.
+
+On Windows, "selected text" briefly presses Ctrl+C for you and then puts your clipboard back.
+
+### Screen awareness
+
+- **Active window:** every question quietly includes the app and window title you were using
+  (about 20 tokens). For full folder paths, turn this on:
+  - **Dolphin:** *Configure Dolphin → Interface → Show the full path inside the title bar*.
+  - **File Explorer:** *Folder Options → View → Display the full path in the title bar*.
+- **Screen viewer** (on/off with ⚙): when you ask about something you didn't select, Claude can
+  take a screenshot of your active window by itself. The chat shows "Looking at your screen…"
+  while it does. Argos's own windows are hidden first, so they never block the view.
+
+## Agent mode
+
+Turn on the **Agent** chip next to the model picker. Claude can then read files and run
+commands on your computer, using your normal Claude Code setup.
+
+- **It asks before changing anything.** An **Allow / Deny** card shows the exact command or file.
+  Every step Claude takes is listed in grey above its answer.
+- **Permission level:** *Ask for everything*, *Ask for changes* (default), or *Trusted folders*
+  (free edits only inside the folders you list).
+- **Folder rules:** *Always ask for these folders* and *Never touch these folders*.
+  When rules overlap, *never* beats *ask*, which beats *trusted*.
+- **Always blocked**, whatever you click: `sudo`, `rm -rf`, `~/.ssh` and `~/.gnupg`.
+- **Cost:** agent mode uses more tokens than the normal chat, because Claude Code's tools and
+  instructions are sent along.
+
+> The folder rules cover Claude's file tools. A shell command could still touch any file, so
+> every command that changes something asks first and shows the full command. Keep backups of
+> important work anyway.
+
+On Windows, agent mode runs commands in bash if Git for Windows is installed, otherwise in PowerShell.
+
+---
+
+## Settings
+
+Open them with ⚙ in the chat (quick switches) or in the full settings
+(*DMS Settings → Plugins → Argos* on Linux, *tray icon → Settings…* on Windows).
+
+| Setting | What it does |
+|---|---|
+| Model / thinking level | Defaults for new chats, plus the list of models in the picker |
+| Web search | Lets Claude search the web (off by default, saves tokens) |
+| Screen viewer | Claude may look at your active window when needed |
+| Include active window | Sends the app and window title with each question |
+| Floating bubble | Shows the draggable bubble |
+| Agent mode by default | New chats start in agent mode |
+| Permission level and folder rules | See [Agent mode](#agent-mode) |
+| Screenshot size limit | Larger screenshots are shrunk (fewer tokens) |
+| Extra instructions | Added to every chat, for example "Answer in Dutch" |
+| Bar icon background | Claude orange, theme/Windows accent colour, or transparent (logo only). On Windows this styles the tray icon and the bubble. |
+| Window border | Thin outline around the chat window |
+| *Windows only:* Start with Windows, shortcuts | Autostart, and the global shortcuts (region, selected text, and an optional one to open the chat). Shortcut changes apply after restarting Argos. |
+
+**Your own logo:** save an SVG as `DuxAI/assets/logo.svg` and it's shown inside the round
+button and the bubble. Without it, a sparkle icon is used.
+
+## Updating and uninstalling
+
+| | Linux (DMS) | Windows |
+|---|---|---|
+| **Update** | `cd ~/Argos && git pull && dms ipc call plugins reload duxAi` | Quit Argos (tray → Quit), run `git pull` in the Argos folder, start Argos again |
+| **Uninstall** | Remove `~/.config/dms/plugins/DuxAI` and the Argos folder | Delete `%USERPROFILE%\.duxai-venv`, the Argos folder and the *Argos* Start-menu entry |
+| **Chats are stored in** | `~/.local/share/dux-ai` | `%USERPROFILE%\.dux-ai` |
+
+Deleting a chat in the history also deletes its screenshots and Claude Code's own copy of the
+conversation.
+
+<details>
+<summary>Troubleshooting</summary>
+
+- **Linux: the plugin doesn't show up** → DMS Settings → Plugins → scan/refresh, or run
+  `dms ipc call plugin-scan rescan duxAi`.
+- **Linux: QML errors** show up in the DMS log output.
+- **Windows: nothing happens after installing** → start Argos from the Start menu. Problems are
+  written to `%USERPROFILE%\.dux-ai\windows-app.log`.
+- **Windows: "shortcut already in use"** → another app uses it. Pick a different one in Settings.
+- **Answers fail with a login or authentication error** → run `claude` in a terminal and type `/login`.
+- **Old setups:** the repository used to be called *DUX-AI*. Old clones keep working, and the
+  plugin id is still `duxAi`.
+</details>
+
+---
 
 ## How it works
 
 ```
- bar button / popout (QML)  ──runs──▶  backend/duxai.py  ──runs──▶  claude -p (Claude Code CLI)
-        ▲                                   │
-        └──── one JSON object per line ◀────┘   chats saved in ~/.local/share/dux-ai/
+  chat window (QML)  ──runs──▶  backend/duxai.py  ──runs──▶  claude -p  (Claude Code CLI)
+        ▲                              │
+        └──── one JSON line per event ◀┘          chats saved as plain JSON files
 ```
 
-- `DuxAI/DuxAIWidget.qml` is the UI only (one file, so `plugins reload` always picks up changes): the bar button, chat, history and
-  pickers. The Windows app loads this same file.
-- `windows/` is the Windows app. `duxai_windows.pyw` handles the tray,
-  shortcuts, region selection and selected text. `shims.py` and `qml/` are
-  small stand-ins for the DMS/Quickshell parts the chat window uses, so the
-  QML runs unchanged. `fonts/DuxIcons.ttf` is a 10 KB copy of the icon font;
-  run `windows/tools/make_icon_font.py` after using a new icon name.
-- `DuxAI/backend/duxai.py` is plain Python with no required packages. It
-  starts `claude`, streams the answer back, and saves, lists and deletes
-  chats. It also takes screenshots, using `dms screenshot region`, or
-  `grim` + `slurp` if `dms` isn't available.
-- Follow-up messages use `claude --resume <session>`, so Claude keeps the
-  conversation context. Prompt caching makes those resends cheap.
-- Deleting a chat also deletes its screenshots and Claude Code's own
-  transcript in `~/.claude/projects/`.
-
-You can try the backend on its own in a terminal:
-
-```bash
-python3 DuxAI/backend/duxai.py ask --model=haiku --effort=low -- "Hello!"
-python3 DuxAI/backend/duxai.py list
-```
-
-## How it saves tokens
-
-These measures don't hurt answer quality:
-
-| What | Why it helps |
+| Part | What it is |
 |---|---|
-| Own short system prompt (`--system-prompt`) | Replaces Claude Code's large coding-agent prompt. This is the biggest saving. |
-| No tools by default (`--tools ""`) | No tool definitions are sent with every message. Web search is an opt-in setting. |
-| `--safe-mode`, `--strict-mcp-config`, `--disable-slash-commands` | Your CLAUDE.md files, MCP servers, plugins and skills aren't loaded into the chat. |
+| `DuxAI/DuxAIWidget.qml` | The whole UI in one file: bar button, chat, history, bubble. Shared by both versions. |
+| `DuxAI/DuxAISettings.qml`, `plugin.json` | DMS plugin settings and metadata. |
+| `DuxAI/backend/duxai.py` | Plain Python, no required packages. Starts `claude`, streams the answer, saves chats, takes screenshots, and provides the small screen-viewer tool. |
+| `DuxAI/backend/winutil.py` | Windows helpers (screenshots, window info, hotkeys) using only `ctypes`. |
+| `windows/duxai_windows.pyw` | The Windows tray app (PySide6): tray, shortcuts, region selection, settings window. |
+| `windows/shims.py`, `windows/qml/` | Small stand-ins for the DMS/Quickshell parts, so the same QML runs on Windows unchanged. |
+| `tests/` | Backend tests, using a fake `claude`. |
+
+Follow-up questions use `claude --resume`, so Claude keeps the context, and prompt caching makes
+those resends cheap.
+
+### How it saves tokens
+
+| Measure | Why it helps |
+|---|---|
+| Own short system prompt | Replaces Claude Code's large coding-agent prompt. This is the biggest saving. |
+| No tools unless needed | No tool definitions in every message. Web search and the screen viewer are opt-in. |
+| Safe mode in normal chat | Your CLAUDE.md files, MCP servers, plugins and skills aren't loaded. |
 | Runs in an empty folder | No project files or git status in the context. |
-| Screenshots shrunk to 1280 px | Image tokens grow with pixel count. Needs Pillow. The size is adjustable. |
-| Chat titles come from your first message | No extra API call to name a chat. |
-| "Be concise" in the system prompt | Shorter answers use fewer output tokens. |
+| Screenshots shrunk (1280 px default) | Image tokens grow with the number of pixels. |
+| Titles from your first message | No extra request just to name a chat. |
 
-Flags your Claude Code version doesn't support are skipped automatically.
-
-## Settings
-
-In DMS Settings → Plugins → DUX-AI you can set:
-
-- default model and thinking level
-- the list of models in the picker
-- web search on or off
-- screenshot size limit
-- extra instructions (for example "Answer in Dutch")
-- bar icon background: Claude orange, theme color, or transparent (logo only)
-- window border on/off
-
-**Bar icon:** to use a logo (for example the official Claude logo), save it as
-`DuxAI/assets/logo.svg`. It is shown in white inside the circle, in the bar
-and in the chat window. Without it you get a sparkle icon.
-
-## Development
+### Development
 
 ```bash
-python3 -m unittest discover tests     # backend tests, use a fake `claude`
-dms ipc call plugins reload duxAi      # reload after editing QML
-# QML errors show up in the DMS shell log output
+python3 -m unittest discover tests                              # backend tests
+python3 DuxAI/backend/duxai.py ask --model=haiku -- "Hello!"    # try the backend alone
+dms ipc call plugins reload duxAi                               # reload after editing QML (Linux)
 ```
 
-## Roadmap ideas
+After using a new icon name in the QML, run `windows/tools/make_icon_font.py` to update the
+small icon font used on Windows.
 
+## Ideas for later
+
+- **Lecture mode:** "explain the last 2 minutes" using local speech-to-text
 - Paste images from the clipboard
-- Keep one `claude` process alive per chat for faster replies
 - Search in history
+- Keep one `claude` process alive per chat for faster replies
