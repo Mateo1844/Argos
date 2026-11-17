@@ -1011,8 +1011,9 @@ PluginComponent {
             property real pressY: 0
             property real startRight: 0
             property real startBottom: 0
-            property real targetRight: 0
-            property real targetBottom: 0
+            // Where the bubble copy is during a drag, on the whole desktop (all monitors).
+            property real ghostX: 0
+            property real ghostY: 0
             property bool dragged: false
 
             onPressed: mouse => {
@@ -1029,31 +1030,25 @@ PluginComponent {
                 if (!dragged && Math.abs(dx) + Math.abs(dy) < 4)
                     return;
                 dragged = true;
-                lastDx = dx;
-                lastDy = dy;
                 // The bubble doesn't move during the drag, so this is exact.
-                targetRight = root.clampRight(startRight - dx);
-                targetBottom = root.clampBottom(startBottom - dy);
+                const from = root.screenRect(root.bubbleScreen);
+                const x = from.x + from.w - startRight - root.bubbleSize + dx;
+                const y = from.y + from.h - startBottom - root.bubbleSize + dy;
+                // Keep it on the monitor under the mouse (or the one it's on).
+                const r = root.screenRect(root.screenAt(x + root.bubbleSize / 2, y + root.bubbleSize / 2) ?? root.bubbleScreen);
+                ghostX = Math.min(Math.max(x, r.x), r.x + r.w - root.bubbleSize);
+                ghostY = Math.min(Math.max(y, r.y), r.y + r.h - root.bubbleSize);
             }
-            property real lastDx: 0
-            property real lastDy: 0
 
             function finishDrag() {
-                // Where did it land on the whole desktop? Maybe on another monitor.
-                const from = root.screenRect(root.bubbleScreen);
-                const x = from.x + from.w - startRight - root.bubbleSize + lastDx;
-                const y = from.y + from.h - startBottom - root.bubbleSize + lastDy;
-                const target = root.screenAt(x + root.bubbleSize / 2, y + root.bubbleSize / 2);
-                if (target && target.name !== root.bubbleScreen?.name) {
-                    const to = root.screenRect(target);
-                    root.bubbleScreenName = target.name;
-                    root.bubbleRight = Math.min(Math.max(to.x + to.w - x - root.bubbleSize, 0), to.w - root.bubbleSize);
-                    root.bubbleBottom = Math.min(Math.max(to.y + to.h - y - root.bubbleSize, 0), to.h - root.bubbleSize);
+                // Where did it land? Maybe on another monitor.
+                const target = root.screenAt(ghostX + root.bubbleSize / 2, ghostY + root.bubbleSize / 2) ?? root.bubbleScreen;
+                const to = root.screenRect(target);
+                root.bubbleScreenName = target?.name ?? "";
+                root.bubbleRight = root.clampRight(to.x + to.w - ghostX - root.bubbleSize);
+                root.bubbleBottom = root.clampBottom(to.y + to.h - ghostY - root.bubbleSize);
+                if (target?.name)
                     pluginService?.savePluginData("duxAi", "bubbleScreen", target.name);
-                } else {
-                    root.bubbleRight = targetRight;
-                    root.bubbleBottom = targetBottom;
-                }
                 pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(root.bubbleRight));
                 pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(root.bubbleBottom));
                 dragged = false;
@@ -1120,28 +1115,36 @@ PluginComponent {
         }
     }
 
-    // Full-screen, click-through layer that only shows the bubble copy while
-    // dragging. It exists as long as the bubble does (empty otherwise): a new
-    // window appearing mid-drag would take the mouse away from the bubble.
-    PanelWindow {
-        id: dragLayer
-        visible: root.floatingBubble
-        screen: root.bubbleScreen ?? null
-        color: "transparent"
-        anchors { top: true; bottom: true; left: true; right: true }
-        exclusionMode: ExclusionMode.Ignore
-        mask: Region {}
-        WlrLayershell.namespace: "dux-ai:bubble-drag"
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    // A full-screen, click-through layer on every monitor that only shows the
+    // bubble copy while dragging (so you can drag it to another monitor). They
+    // exist as long as the bubble does (empty otherwise): a new window
+    // appearing mid-drag would take the mouse away from the bubble.
+    Instantiator {
+        model: root.floatingBubble ? root.allScreens : []
 
-        BubbleFace {
-            visible: bubbleMouse.dragged
-            width: root.bubbleSize
-            height: root.bubbleSize
-            x: dragLayer.width - bubbleMouse.targetRight - root.bubbleSize
-            y: dragLayer.height - bubbleMouse.targetBottom - root.bubbleSize
-            hovered: true
+        delegate: PanelWindow {
+            id: dragLayer
+            required property var modelData
+            readonly property var area: root.screenRect(modelData)
+            visible: true
+            screen: modelData
+            color: "transparent"
+            anchors { top: true; bottom: true; left: true; right: true }
+            exclusionMode: ExclusionMode.Ignore
+            mask: Region {}
+            WlrLayershell.namespace: "dux-ai:bubble-drag"
+            WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+            BubbleFace {
+                visible: bubbleMouse.dragged
+                width: root.bubbleSize
+                height: root.bubbleSize
+                // Desktop position -> position on this monitor (off-window = not drawn here).
+                x: bubbleMouse.ghostX - dragLayer.area.x
+                y: bubbleMouse.ghostY - dragLayer.area.y
+                hovered: true
+            }
         }
     }
 
