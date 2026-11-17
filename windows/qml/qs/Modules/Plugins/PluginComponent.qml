@@ -44,6 +44,11 @@ Item {
     function closePopout() {
         popup.visible = false;
     }
+    // Called by DuxAIWidget.qml when the floating bubble is turned off.
+    function closeBubblePopup() {
+        if (popupAnchor)
+            closePopout();
+    }
     // Set when the chat is opened from the floating bubble: open it next to the bubble.
     property var popupAnchor: null
 

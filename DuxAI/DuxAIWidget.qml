@@ -492,6 +492,21 @@ PluginComponent {
     property bool reopenInBubble: false     // after a screenshot/selection, come back in the bubble chat
     readonly property bool chatVisible: interactionActive || bubbleChatOpen
 
+    // Turning the bubble off (e.g. in the gear menu of the bubble chat) closes its chat too.
+    onFloatingBubbleChanged: {
+        if (!floatingBubble) {
+            bubbleChatOpen = false;
+            if (typeof root.closeBubblePopup === "function")
+                root.closeBubblePopup();          // Windows: the popup opened next to the bubble
+        }
+    }
+
+    // The gear menu closes together with the chat.
+    onChatVisibleChanged: {
+        if (!chatVisible)
+            quickSettingsOpen = false;
+    }
+
     onBubbleChatOpenChanged: {
         if (bubbleChatOpen) {
             fetchWindow();
@@ -1125,6 +1140,17 @@ PluginComponent {
                 border.width: 1
                 border.color: Theme.withAlpha(root.accent, 0.45)
                 z: 100
+            }
+
+            // Click anywhere next to the gear menu: close it (the click does nothing else).
+            MouseArea {
+                visible: root.quickSettingsOpen
+                z: 199
+                anchors.fill: parent
+                anchors.margins: -PopoutMetrics.contentPadding   // also the window's edge
+                acceptedButtons: Qt.AllButtons
+                onPressed: root.quickSettingsOpen = false
+                onWheel: wheel => wheel.accepted = true
             }
 
             // ---- quick settings panel (gear button) ----
