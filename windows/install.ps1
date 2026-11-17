@@ -65,6 +65,8 @@ $link.TargetPath = $pythonw
 $link.Arguments = "`"$app`""
 $link.WorkingDirectory = Split-Path $here
 $link.Description = "Claude in your tray"
+$ico = (& $python $app --write-icon 2>$null | Select-Object -Last 1)
+if ($ico -and (Test-Path $ico)) { $link.IconLocation = $ico }
 $link.Save()
 Ok "Start menu shortcut created"
 

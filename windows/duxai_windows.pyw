@@ -64,7 +64,7 @@ def help_windows_find_qt_dlls():
 if os.name == "nt":
     help_windows_find_qt_dlls()
 
-from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer, QUrl, Property, Signal, Slot, QMimeData
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPoint, QRect, Qt, QTimer, QUrl, Property, Signal, Slot, QMimeData
 from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtQml import QJSValue, QQmlComponent, QQmlEngine, qmlRegisterType
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -114,6 +114,8 @@ class Bridge(QObject):
         super().__init__()
         self.app = app
         self.tray = None
+        self.toast = None
+        self._app_icon_url = ""
         self.last_hwnd = 0               # last window you used that isn't DUX-AI
         self.last_window = {"app": "", "title": ""}
         self._hold = False
@@ -180,9 +182,16 @@ class Bridge(QObject):
 
     @Slot(str, str, bool)
     def notify(self, message, details, error):
-        if self.tray:
-            icon = QSystemTrayIcon.Warning if error else QSystemTrayIcon.Information
-            self.tray.showMessage("DUX-AI", (message + ("\n" + details if details else "")).strip(), icon, 4000)
+        self.show_toast(message, details, error)
+
+    def show_toast(self, heading, message="", error=False, action_label="", action_key=""):
+        """DUX-AI's own notification card (Windows' own would say it's from "Python")."""
+        if self.toast is not None:
+            QMetaObject.invokeMethod(self.toast, "showToast", Q_ARG("QVariant", heading), Q_ARG("QVariant", message),
+                                     Q_ARG("QVariant", bool(error)), Q_ARG("QVariant", action_label),
+                                     Q_ARG("QVariant", action_key))
+
+    appIconUrl = Property(str, lambda self: self._app_icon_url, constant=True)
 
     # --- start with Windows: a shortcut in your Startup folder ---
     # Made through PowerShell: Python from the Microsoft Store would secretly
@@ -206,8 +215,10 @@ class Bridge(QObject):
             pythonw = Path(sys.executable).with_name("pythonw.exe")
             target = str(pythonw if pythonw.exists() else sys.executable).replace("'", "''")
             app = str(Path(__file__).resolve()).replace("'", "''")
+            ico = str(duxai.DATA_DIR / "duxai.ico").replace("'", "''")
             script = (f"$l = (New-Object -ComObject WScript.Shell).CreateShortcut('{link}'); "
-                      f"$l.TargetPath = '{target}'; $l.Arguments = '\"{app}\"'; $l.Save()")
+                      f"$l.TargetPath = '{target}'; $l.Arguments = '\"{app}\"'; "
+                      f"if (Test-Path '{ico}') {{ $l.IconLocation = '{ico}' }}; $l.Save()")
         else:
             script = f"Remove-Item -LiteralPath '{link}' -ErrorAction SilentlyContinue"
         subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
@@ -383,9 +394,9 @@ class RegionOverlay(QWidget):
 
 # ================================================================= tray ==
 
-def tray_icon(bridge):
-    """Orange circle with the logo (DuxAI/assets/logo.svg, made white) or a sparkle."""
-    size = 64
+def app_pixmap(bridge, size):
+    """The DUX-AI icon: orange circle with the logo (DuxAI/assets/logo.svg, made
+    white) or a sparkle."""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
@@ -394,24 +405,47 @@ def tray_icon(bridge):
     p.setBrush(QColor(ACCENT))
     p.drawEllipse(0, 0, size, size)
     logo = PLUGIN / "assets" / "logo.svg"
+    pad = round(size * 0.22)
     if logo.exists():
         from PySide6.QtSvg import QSvgRenderer
         glyph = QPixmap(size, size)
         glyph.fill(Qt.transparent)
         gp = QPainter(glyph)
-        QSvgRenderer(str(logo)).render(gp, QRect(14, 14, size - 28, size - 28).toRectF())
+        gp.setRenderHint(QPainter.Antialiasing)
+        QSvgRenderer(str(logo)).render(gp, QRect(pad, pad, size - 2 * pad, size - 2 * pad).toRectF())
         gp.setCompositionMode(QPainter.CompositionMode_SourceIn)   # paint it white
         gp.fillRect(glyph.rect(), Qt.white)
         gp.end()
         p.drawPixmap(0, 0, glyph)
     else:
         font = QFont(bridge.iconFont)
-        font.setPixelSize(40)
+        font.setPixelSize(round(size * 0.62))
         p.setFont(font)
         p.setPen(Qt.white)
         p.drawText(pix.rect(), Qt.AlignCenter, bridge.icon("auto_awesome"))
     p.end()
-    return QIcon(pix)
+    return pix
+
+
+def app_icon(bridge):
+    icon = QIcon()
+    for size in (16, 20, 24, 32, 40, 48, 64, 128, 256):
+        icon.addPixmap(app_pixmap(bridge, size))
+    return icon
+
+
+def write_icon_files(bridge):
+    """icon.png (for notifications) and duxai.ico (for the Start menu shortcut)."""
+    duxai.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    png = duxai.DATA_DIR / "icon.png"
+    app_pixmap(bridge, 256).save(str(png), "PNG")
+    try:
+        from PIL import Image
+        Image.open(png).save(duxai.DATA_DIR / "duxai.ico",
+                             sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    except Exception as exc:  # noqa: BLE001 - icon is cosmetic
+        log("Could not write duxai.ico:", exc)
+    bridge._app_icon_url = QUrl.fromLocalFile(str(png)).toString()
 
 
 # ================================================================== main ==
@@ -422,12 +456,19 @@ def build():
     os.environ.setdefault("QT_QUICK_CONTROLS_MATERIAL_ACCENT", ACCENT)
     # Dark "Material" look; "Basic" (Qt's plain built-in style) is the fallback.
     QQuickStyle.setStyle(os.environ.get("DUXAI_STYLE", "Material"))
+    if IS_WINDOWS:
+        # Own identity for the taskbar (otherwise windows are grouped under "Python").
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Mateo1844.DUX-AI")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)    # it lives in the tray
     app.setApplicationName("DUX-AI")
 
     bridge = Bridge(app)
     shims.BRIDGE = bridge
+    icon = app_icon(bridge)
+    app.setWindowIcon(icon)                 # settings window, taskbar, Alt+Tab
+    write_icon_files(bridge)
 
     engine = QQmlEngine()
     engine.addImportPath(str(HERE / "qml"))
@@ -453,7 +494,7 @@ def build():
         raise SystemExit("Could not load the chat window:\n" + errors)
 
     # Tray icon + menu.
-    tray = QSystemTrayIcon(tray_icon(bridge), app)
+    tray = QSystemTrayIcon(icon, app)
     tray.setToolTip("DUX-AI: Claude")
     bridge.tray = tray
     menu = QMenu()
@@ -477,12 +518,23 @@ def build():
             if win is None:
                 log("Settings window failed:", [e.toString() for e in comp.errors()])
                 return
+            engine.setObjectOwnership(win, QQmlEngine.CppOwnership)
             settings_window["w"] = win
         settings_window["w"].show()
         settings_window["w"].raise_()
         settings_window["w"].requestActivate()
 
     menu.addAction("Settings…", open_settings)
+
+    # DUX-AI's own notification card.
+    toast_comp = QQmlComponent(engine, QUrl.fromLocalFile(str(HERE / "qml" / "Toast.qml")))
+    toast = toast_comp.create()
+    if toast is not None:
+        engine.setObjectOwnership(toast, QQmlEngine.CppOwnership)
+        toast.actionClicked.connect(lambda key: open_settings() if key == "settings" else None)
+        bridge.toast = toast
+    else:
+        log("Notification card failed:", [e.toString() for e in toast_comp.errors()])
     menu.addSeparator()
     menu.addAction("Quit", app.quit)
     tray.setContextMenu(menu)
@@ -507,15 +559,23 @@ def build():
 
         threading.Thread(target=winutil.hotkey_loop, daemon=True,
                          args=(hotkeys, lambda name: bridge.action.emit(names[name]), on_error)).start()
-        QTimer.singleShot(1500, lambda: errors and bridge.notify(
-            "Some shortcuts could not be set", "\n".join(errors) + "\nChange them in Settings.", True))
+        QTimer.singleShot(1500, lambda: errors and bridge.show_toast(
+            "Shortcut already in use" if len(errors) == 1 else "Some shortcuts are already in use",
+            "\n".join(errors) + "\nPick another one in Settings.", True, "Open settings", "settings"))
 
     log("Started")
-    app._keep = (tray, menu, tracker, settings_window, open_settings, engine, component, widget)   # keep alive
+    app._keep = (tray, menu, tracker, settings_window, open_settings, engine, component, widget,
+                 toast_comp, toast)   # keep alive
     return app, bridge, engine, widget
 
 
 def main():
+    if "--write-icon" in sys.argv:
+        # Used by install.ps1: only write duxai.ico (for the Start menu shortcut).
+        app = QApplication(sys.argv)
+        write_icon_files(Bridge(app))
+        print(duxai.DATA_DIR / "duxai.ico")
+        return
     app, *_ = build()
     sys.exit(app.exec())
 
