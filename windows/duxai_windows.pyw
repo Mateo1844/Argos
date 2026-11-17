@@ -39,6 +39,31 @@ except ImportError:
                   "\n\nRun windows\\install.ps1 again and check its output, or start DUX-AI from the "
                   "Start menu entry the installer made.")
 
+
+def help_windows_find_qt_dlls():
+    """Windows: let Qt's plugins (dark style, layouts, ...) find PySide6's DLLs.
+
+    Qt loads those plugins from subfolders; Windows then looks for the DLLs
+    they need in the wrong places ("The specified module could not be found"),
+    especially with Python from the Microsoft Store. So: add PySide6's folder
+    to the search path and load the Qt Quick DLLs in advance.
+    """
+    import ctypes
+    import PySide6
+    qt_dir = Path(PySide6.__file__).resolve().parent
+    os.add_dll_directory(str(qt_dir))
+    os.environ["PATH"] = str(qt_dir) + os.pathsep + os.environ.get("PATH", "")
+    for pattern in ("Qt6Qml*.dll", "Qt6Quick*.dll", "Qt6Svg*.dll", "Qt6OpenGL.dll"):
+        for dll in sorted(qt_dir.glob(pattern)):
+            try:
+                ctypes.WinDLL(str(dll))
+            except OSError:
+                pass   # not needed by DUX-AI, or loads later anyway
+
+
+if os.name == "nt":
+    help_windows_find_qt_dlls()
+
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer, QUrl, Property, Signal, Slot, QMimeData
 from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtQml import QJSValue, QQmlComponent, QQmlEngine, qmlRegisterType
@@ -397,7 +422,8 @@ def build():
     """Create the app, chat window, tray and shortcuts. Returns (app, bridge, engine, widget)."""
     os.environ.setdefault("QT_QUICK_CONTROLS_MATERIAL_THEME", "Dark")
     os.environ.setdefault("QT_QUICK_CONTROLS_MATERIAL_ACCENT", ACCENT)
-    QQuickStyle.setStyle("Material")
+    # Dark "Material" look; "Basic" (Qt's plain built-in style) is the fallback.
+    QQuickStyle.setStyle(os.environ.get("DUXAI_STYLE", "Material"))
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)    # it lives in the tray
     app.setApplicationName("DUX-AI")
@@ -420,6 +446,12 @@ def build():
     if widget is None:
         errors = "\n".join(e.toString() for e in component.errors())
         log("Could not load the chat window:\n" + errors)
+        if "Cannot load library" in errors and "DUXAI_STYLE" not in os.environ:
+            # A style plugin wouldn't load: start again once with the plain style.
+            import subprocess
+            log("Restarting with the Basic style")
+            subprocess.Popen([sys.executable, str(Path(__file__).resolve())], env={**os.environ, "DUXAI_STYLE": "Basic"})
+            raise SystemExit(0)
         raise SystemExit("Could not load the chat window:\n" + errors)
 
     # Tray icon + menu.
