@@ -44,12 +44,33 @@ Item {
     function closePopout() {
         popup.visible = false;
     }
+    // Set when the chat is opened from the floating bubble: open it next to the bubble.
+    property var popupAnchor: null
+
+    // Called by DuxAIWidget.qml when the floating bubble is clicked.
+    // openOnly = true: don't close it if it's already open.
+    function showPopupNear(bubbleX, bubbleY, bubbleSize, openOnly) {
+        popupAnchor = { x: bubbleX, y: bubbleY, size: bubbleSize };
+        if (popup.visible && !openOnly)
+            closePopout();
+        else
+            showPopup();
+    }
+
     // (Not called "openPopout": DuxAIWidget.qml has its own function with that name.)
     function showPopup() {
-        // Bottom-right of the screen with the mouse, just above the taskbar.
         const area = dux.workArea();
-        popup.x = area.x + area.width - popup.width - 12;
-        popup.y = area.y + area.height - popup.height - 12;
+        if (popupAnchor) {
+            // Next to the bubble: above it if there's room, otherwise below; inside the screen.
+            const a = popupAnchor;
+            const above = a.y - popup.height - 8;
+            popup.x = Math.min(Math.max(a.x + a.size - popup.width, area.x), area.x + area.width - popup.width);
+            popup.y = above >= area.y ? above : Math.min(a.y + a.size + 8, area.y + area.height - popup.height);
+        } else {
+            // Bottom-right of the screen with the mouse, just above the taskbar.
+            popup.x = area.x + area.width - popup.width - 12;
+            popup.y = area.y + area.height - popup.height - 12;
+        }
         popup.visible = true;
         popup.raise();
         popup.requestActivate();
@@ -60,6 +81,7 @@ Item {
     Connections {
         target: dux
         function onAction(name) {
+            base.popupAnchor = null;   // tray / shortcuts: open above the tray again
             if (name === "toggle") {
                 // Clicking the tray icon while the chat is open first closes it
                 // (focus lost); that same click must not open it again.

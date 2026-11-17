@@ -486,10 +486,42 @@ PluginComponent {
     }
 
     // ------------------------------------------------------- popout control --
+    // The chat can be open in two places: the normal DMS popout (bar button)
+    // or the bubble chat (floating bubble, shown above fullscreen video).
+    property bool bubbleChatOpen: false
+    property bool reopenInBubble: false     // after a screenshot/selection, come back in the bubble chat
+    readonly property bool chatVisible: interactionActive || bubbleChatOpen
+
+    onBubbleChatOpenChanged: {
+        if (bubbleChatOpen) {
+            fetchWindow();
+            focusTimer.restart();
+        }
+    }
+
     function openPopout() {
+        if (reopenInBubble || bubbleChatOpen) {
+            reopenInBubble = false;
+            openBubbleChat();
+            return;
+        }
         if (!root.interactionActive)
             root.triggerPopout();
         focusTimer.restart();
+    }
+
+    function openBubbleChat() {
+        if (root.onWindows && typeof root.showPopupNear === "function")
+            root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, true);   // Windows: normal popup, next to the bubble
+        else
+            bubbleChatOpen = true;
+    }
+
+    function toggleBubbleChat() {
+        if (root.onWindows && typeof root.showPopupNear === "function")
+            root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, false);  // toggles
+        else
+            bubbleChatOpen = !bubbleChatOpen;
     }
 
     // Called by `dms ipc call widget openWith duxAi <mode>` (keyboard shortcut).
@@ -509,8 +541,10 @@ PluginComponent {
     }
 
     // ------------------------------------------------------------- capture --
-    function startCapture() {
+    function startCapture(fromBubble) {
         fetchWindow();
+        reopenInBubble = fromBubble === true || bubbleChatOpen;
+        bubbleChatOpen = false;
         root.closePopout();          // get the window out of the way first
         captureTimer.restart();
     }
@@ -533,6 +567,7 @@ PluginComponent {
     // Text highlighted anywhere on screen (Wayland primary selection).
     function grabSelection() {
         fetchWindow();
+        reopenInBubble = bubbleChatOpen;
         Proc.runCommand("duxAi.selection", ["python3", root.backend, "selection"], (out, code) => {
             const ev = root.lastJson(out);
             if (ev?.type === "selection") {
@@ -786,7 +821,7 @@ PluginComponent {
     // approval and the chat window is closed. Opening the chat hides it.
     PanelWindow {
         id: permPopup
-        visible: root.permission !== null && !root.interactionActive
+        visible: root.permission !== null && !root.chatVisible
         screen: root.parentScreen ?? null
         color: "transparent"
         anchors { top: true; right: true }
@@ -937,12 +972,56 @@ PluginComponent {
                 if (dragged) {
                     finishDrag();
                 } else if (mouse.button === Qt.RightButton) {
-                    root.startCapture();
+                    root.startCapture(true);
                 } else {
-                    root.triggerPopout();
+                    root.toggleBubbleChat();
                 }
                 dragged = false;
             }
+        }
+    }
+
+    // The chat, opened from the floating bubble (DMS). Same content as the bar
+    // popout, but on the overlay layer, so it shows above fullscreen video.
+    // Placed next to the bubble: above it if there's room, otherwise below.
+    // Esc or clicking the bubble again closes it.
+    PanelWindow {
+        id: bubbleChat
+        visible: root.bubbleChatOpen && !root.onWindows
+        screen: root.parentScreen ?? null
+        color: "transparent"
+        anchors { bottom: true; right: true }
+        readonly property real pad: PopoutMetrics.contentPadding
+        readonly property real chatHeight: (chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad
+        readonly property real bubbleTop: bubble.margins.bottom + root.bubbleSize   // distance from the screen bottom
+        readonly property bool roomAbove: bubbleTop + 8 + chatHeight <= (root.parentScreen?.height ?? 1080)
+        margins {
+            right: Math.min(bubble.margins.right, Math.max(0, (root.parentScreen?.width ?? 1920) - root.popoutWidth))
+            bottom: bubbleChat.roomAbove ? bubbleChat.bubbleTop + 8 : Math.max(0, bubble.margins.bottom - bubbleChat.chatHeight - 8)
+        }
+        implicitWidth: root.popoutWidth
+        implicitHeight: chatHeight
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.namespace: "dux-ai:chat"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive   // type right away
+
+        Rectangle {
+            anchors.fill: parent
+            radius: Theme.windowRadius
+            color: Theme.surfaceContainer
+            border.width: 1
+            border.color: Theme.withAlpha(Theme.onSurface, 0.08)
+        }
+        Loader {
+            id: chatLoader
+            x: bubbleChat.pad
+            y: bubbleChat.pad
+            width: parent.width - 2 * bubbleChat.pad
+            active: bubbleChat.visible
+            focus: true
+            sourceComponent: root.popoutContent
+            Keys.onEscapePressed: root.bubbleChatOpen = false
         }
     }
 

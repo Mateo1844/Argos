@@ -32,7 +32,8 @@ There are two versions, and they share the same chat window and backend:
   (input, how much of it was cached, output).
 - **Floating bubble** (setting): a small draggable round button that stays
   on top of everything, including fullscreen video, which is handy during
-  lectures. Click opens the chat, right-click asks about a screen region.
+  lectures. Click opens the chat right next to the bubble, above the video;
+  Esc or another click closes it. Right-click asks about a screen region.
 - **History page:** open, continue or delete old chats. The bottom of the page
   shows how much disk space saved chats use.
 
