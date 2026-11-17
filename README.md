@@ -120,7 +120,7 @@ mode, screen viewer and settings.
 | Ask about a screen region | Mod+Shift+A | **Win+Shift+A** |
 | Ask about selected text | Mod+Shift+X | **Win+Shift+X** (it quickly presses Ctrl+C for you, then puts your clipboard back) |
 | Settings | DMS Settings → Plugins | Right-click the tray icon → Settings… |
-| Chats are stored in | `~/.local/share/dux-ai` | `%LOCALAPPDATA%\dux-ai` |
+| Chats are stored in | `~/.local/share/dux-ai` | `%USERPROFILE%\.dux-ai` |
 
 **Install** (Windows 10 1809+ or 11):
 
@@ -151,7 +151,7 @@ mode, screen viewer and settings.
   bar"*.
 - Git for Windows is optional. With it, agent mode runs commands in bash;
   without it, in PowerShell.
-- Problems are written to `%LOCALAPPDATA%\dux-ai\windows-app.log`.
+- Problems are written to `%USERPROFILE%\.dux-ai\windows-app.log`.
 
 ## How it works
 

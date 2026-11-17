@@ -36,8 +36,10 @@ from pathlib import Path
 # ---------------------------------------------------------------- paths ----
 
 IS_WINDOWS = os.name == "nt"
-if IS_WINDOWS:   # C:\Users\<you>\AppData\Local\dux-ai
-    DATA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "dux-ai"
+if IS_WINDOWS:   # C:\Users\<you>\.dux-ai
+    # Not in AppData: Python from the Microsoft Store secretly redirects what it
+    # writes there to a private folder that Claude Code can't see.
+    DATA_DIR = Path.home() / ".dux-ai"
 else:            # ~/.local/share/dux-ai
     DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "dux-ai"
 CHATS_DIR = DATA_DIR / "chats"      # one JSON file per chat

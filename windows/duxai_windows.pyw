@@ -87,7 +87,6 @@ SETTINGS_FILE = duxai.DATA_DIR / "settings.json"
 LOG_FILE = duxai.DATA_DIR / "windows-app.log"
 ACCENT = "#D97757"
 DEFAULT_HOTKEYS = {"hotkeyCapture": "Win+Shift+A", "hotkeyText": "Win+Shift+X", "hotkeyChat": ""}
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
 def log(*parts):
@@ -185,17 +184,15 @@ class Bridge(QObject):
             icon = QSystemTrayIcon.Warning if error else QSystemTrayIcon.Information
             self.tray.showMessage("DUX-AI", (message + ("\n" + details if details else "")).strip(), icon, 4000)
 
-    # --- start with Windows (registry "Run" key, current user only) ---
+    # --- start with Windows: a shortcut in your Startup folder ---
+    # Made through PowerShell: Python from the Microsoft Store would secretly
+    # redirect its own writes (registry and AppData) where Windows doesn't look.
+    @staticmethod
+    def _startup_link():
+        return Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/DUX-AI.lnk"
+
     def _get_autostart(self):
-        if not IS_WINDOWS:
-            return False
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-                winreg.QueryValueEx(key, "DUX-AI")
-                return True
-        except OSError:
-            return False
+        return IS_WINDOWS and self._startup_link().exists()
 
     startWithWindows = Property(bool, _get_autostart, notify=startWithWindowsChanged)
 
@@ -203,17 +200,18 @@ class Bridge(QObject):
     def setStartWithWindows(self, on):
         if not IS_WINDOWS:
             return
-        import winreg
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
-        command = f'"{pythonw if pythonw.exists() else sys.executable}" "{Path(__file__).resolve()}"'
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
-            if on:
-                winreg.SetValueEx(key, "DUX-AI", 0, winreg.REG_SZ, command)
-            else:
-                try:
-                    winreg.DeleteValue(key, "DUX-AI")
-                except OSError:
-                    pass
+        import subprocess
+        link = str(self._startup_link()).replace("'", "''")
+        if on:
+            pythonw = Path(sys.executable).with_name("pythonw.exe")
+            target = str(pythonw if pythonw.exists() else sys.executable).replace("'", "''")
+            app = str(Path(__file__).resolve()).replace("'", "''")
+            script = (f"$l = (New-Object -ComObject WScript.Shell).CreateShortcut('{link}'); "
+                      f"$l.TargetPath = '{target}'; $l.Arguments = '\"{app}\"'; $l.Save()")
+        else:
+            script = f"Remove-Item -LiteralPath '{link}' -ErrorAction SilentlyContinue"
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                       creationflags=0x08000000, timeout=20)   # CREATE_NO_WINDOW
         self.startWithWindowsChanged.emit()
 
     # --- commands from the chat window (DMS's Proc.runCommand) ---
