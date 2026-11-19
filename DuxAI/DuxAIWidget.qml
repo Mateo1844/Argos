@@ -412,6 +412,7 @@ PluginComponent {
     readonly property color accent: useThemeColor ? (Theme.systemAccent ?? Theme.primary) : "#D97757"
     readonly property bool pillTransparent: pluginData.pillColor === "transparent"
     readonly property bool showBorder: pluginData.showBorder ?? true
+    readonly property bool showUsage: pluginData.showUsage ?? true
 
     readonly property var modelOptions: (pluginData.models || "sonnet,opus,haiku").split(",").map(s => s.trim()).filter(s => s.length > 0).map(s => ({
                 value: s,
@@ -2259,7 +2260,7 @@ PluginComponent {
                             // Discrete counter: tokens in this chat and % of the 5-hour limit used.
                             StyledText {
                                 readonly property bool hasTokens: root.tokens !== null && root.tokens.total > 0
-                                visible: hasTokens || root.fiveHour !== null
+                                visible: root.showUsage && (hasTokens || root.fiveHour !== null)
                                 textFormat: Text.StyledText
                                 // "12.3k tok · 23%" (% of the 5-hour session limit), orange from 80%, red from 95%.
                                 text: (hasTokens ? root.fmtTokens(root.tokens.total) + " tok" : "")

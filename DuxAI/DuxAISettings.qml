@@ -192,6 +192,13 @@ PluginSettings {
             description: "Thin outline around the chat window so you can see where it ends."
             defaultValue: true
         }
+
+        ToggleSetting {
+            settingKey: "showUsage"
+            label: "Show token and session usage"
+            description: "Small counter in the chat: tokens used in this chat, and how much of your 5-hour session limit you've used (e.g. \"128 tok · 24%\")."
+            defaultValue: true
+        }
     }
 
     // Windows has its own shortcut settings (see windows/qml/SettingsWindow.qml).

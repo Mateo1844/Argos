@@ -177,6 +177,7 @@ Open them with ⚙ in the chat (quick switches) or in the full settings
 | Extra instructions | Added to every chat, for example "Answer in Dutch" |
 | Bar icon background | Claude orange, theme/Windows accent colour, or transparent (logo only). On Windows this styles the tray icon and the bubble. |
 | Window border | Thin outline around the chat window |
+| Show token and session usage | The small `128 tok · 24%` counter in the chat |
 | *Windows only:* Start with Windows, shortcuts | Autostart, and the global shortcuts (region, selected text, and an optional one to open the chat). Shortcut changes apply after restarting Argos. |
 
 **Your own logo:** save an SVG as `DuxAI/assets/logo.svg` and it's shown inside the round
