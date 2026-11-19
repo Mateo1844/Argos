@@ -326,6 +326,8 @@ class Bridge(QObject):
             for o in overlays:
                 o.close()
             done(path)
+            # The full-screen selection covered everything: put the bubble back on top.
+            QTimer.singleShot(150, lambda: getattr(self, "reassertOnTop", lambda: None)())
 
         for screen in QGuiApplication.screens():
             overlays.append(RegionOverlay(screen, finish))
@@ -586,6 +588,22 @@ def build():
     tray = QSystemTrayIcon(icon, app)
     tray.setToolTip("Argos (Claude)")
     bridge.tray = tray
+
+    # Keep the bubble (and other "on top" windows) on top. Windows can lose
+    # that silently; re-applying it is cheap, so do it every 2 seconds.
+    if IS_WINDOWS:
+        def reassert_on_top():
+            wins = [w for w in QGuiApplication.topLevelWindows()
+                    if w.isVisible() and w.flags() & Qt.WindowStaysOnTopHint]
+            wins.sort(key=lambda w: w.width() * w.height(), reverse=True)   # smallest (the bubble) last = highest
+            try:
+                winutil.keep_on_top([int(w.winId()) for w in wins])
+            except Exception as exc:  # noqa: BLE001 - cosmetic
+                log("keep_on_top failed:", exc)
+        on_top_timer = QTimer(app)
+        on_top_timer.timeout.connect(reassert_on_top)
+        on_top_timer.start(2000)
+        bridge.reassertOnTop = reassert_on_top
 
     # The "Bar icon background" setting changes the tray icon (and app icon) live.
     last_style = [bridge.setting("pillColor", "claude")]

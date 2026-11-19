@@ -124,14 +124,40 @@ def hide_windows_of(pid):
         return True
 
     user32.EnumWindows(_WNDENUMPROC(callback), 0)
+    _was_on_top.clear()
     for hwnd in found:
+        if user32.GetWindowLongW(HWND(hwnd), -20) & 0x8:   # GWL_EXSTYLE has WS_EX_TOPMOST
+            _was_on_top.append(hwnd)
         user32.ShowWindow(hwnd, 0)    # SW_HIDE
     return found
+
+
+_was_on_top = []
+
+
+def _area(hwnd):
+    r = wintypes.RECT()
+    user32.GetWindowRect(HWND(hwnd), ctypes.byref(r))
+    return (r.right - r.left) * (r.bottom - r.top)
 
 
 def show_windows(hwnds):
     for hwnd in hwnds:
         user32.ShowWindow(hwnd, 8)    # SW_SHOWNA: show again without taking focus
+    # ...and back on top (the bubble, being smallest, ends up highest).
+    keep_on_top(sorted((h for h in hwnds if h in _was_on_top), key=_area, reverse=True))
+
+
+def keep_on_top(hwnds):
+    """Put these windows back at the top of the "always on top" group, in this
+    order (the last one ends up highest). Windows sometimes drops a window out
+    of that group (after a screenshot hid it, a fullscreen app, an Explorer
+    restart, ...), and then nothing would bring it back."""
+    HWND_TOPMOST = HWND(-1)
+    flags = 0x0001 | 0x0002 | 0x0010 | 0x0200   # NOSIZE | NOMOVE | NOACTIVATE | NOOWNERZORDER
+    for hwnd in hwnds:
+        if hwnd and user32.IsWindowVisible(hwnd):
+            user32.SetWindowPos(HWND(hwnd), HWND_TOPMOST, 0, 0, 0, 0, flags)
 
 
 def set_foreground(hwnd):
