@@ -521,6 +521,27 @@ PluginComponent {
     // The chat can be open in two places: the normal DMS popout (bar button)
     // or the bubble chat (floating bubble, shown above fullscreen video).
     property bool bubbleChatOpen: false
+
+    // Pinned: the chat stays open when you click somewhere else (close it with
+    // Esc, the bar button / tray icon or the bubble). DMS's own popout always
+    // closes on an outside click, so on DMS a pinned chat lives in Argos's own
+    // window: under the bar, or next to the bubble when that's on.
+    property bool pinned: pluginData.pinned ?? false
+    pillClickAction: (!root.onWindows && root.pinned) ? (() => root.bubbleChatOpen = !root.bubbleChatOpen) : null
+
+    function togglePin() {
+        pinned = !pinned;
+        pluginService?.savePluginData("duxAi", "pinned", pinned);
+        if (root.onWindows)
+            return;
+        if (pinned && root.interactionActive) {          // move from DMS's popout to our own window
+            root.closePopout();
+            bubbleChatOpen = true;
+        } else if (!pinned && bubbleChatOpen && !root.floatingBubble) {
+            bubbleChatOpen = false;                       // back to DMS's normal popout
+            Qt.callLater(root.triggerPopout);
+        }
+    }
     property bool reopenInBubble: false     // after a screenshot/selection, come back in the bubble chat
     readonly property bool chatVisible: interactionActive || bubbleChatOpen
 
@@ -566,7 +587,7 @@ PluginComponent {
     }
 
     function openPopout() {
-        if (reopenInBubble || bubbleChatOpen) {
+        if (reopenInBubble || bubbleChatOpen || (pinned && !onWindows)) {
             reopenInBubble = false;
             openBubbleChat();
             return;
@@ -1107,13 +1128,16 @@ PluginComponent {
     PanelWindow {
         id: bubbleChat
         visible: root.bubbleChatOpen && !root.onWindows
-        screen: root.bubbleScreen ?? null
+        // No bubble: a pinned chat sits under the bar, top-right.
+        readonly property bool atBar: !root.floatingBubble
+        screen: (atBar ? root.parentScreen : root.bubbleScreen) ?? null
         color: "transparent"
-        anchors { bottom: true; right: true }
+        anchors { top: bubbleChat.atBar; bottom: !bubbleChat.atBar; right: true }
         readonly property real pad: PopoutMetrics.contentPadding
-        readonly property var area: root.screenRect(root.bubbleScreen)
+        readonly property var area: root.screenRect(atBar ? root.parentScreen : root.bubbleScreen)
         // Never taller than the screen.
-        readonly property real chatHeight: Math.min((chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad, area.h - 16)
+        readonly property real chatHeight: Math.min((chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad,
+                                                    area.h - 16 - (atBar ? margins.top : 0))
         // Everything in "distance from the right / bottom screen edge", like the margins.
         readonly property real bR: bubble.margins.right
         readonly property real bB: bubble.margins.bottom
@@ -1127,10 +1151,11 @@ PluginComponent {
             return Math.min(Math.max(v, 0), Math.max(0, max));
         }
         margins {
-            right: bubbleChat.side === "left" ? bubbleChat.clamp(bubbleChat.bR + root.bubbleSize + bubbleChat.gap, bubbleChat.area.w - root.popoutWidth)
+            top: root.barThickness + root.barSpacing + 4
+            right: bubbleChat.atBar ? 12 : bubbleChat.side === "left" ? bubbleChat.clamp(bubbleChat.bR + root.bubbleSize + bubbleChat.gap, bubbleChat.area.w - root.popoutWidth)
                  : bubbleChat.side === "right" ? bubbleChat.bR - bubbleChat.gap - root.popoutWidth
                  : bubbleChat.clamp(bubbleChat.bR, bubbleChat.area.w - root.popoutWidth)
-            bottom: bubbleChat.side === "above" ? bubbleChat.bB + root.bubbleSize + bubbleChat.gap
+            bottom: bubbleChat.atBar ? 0 : bubbleChat.side === "above" ? bubbleChat.bB + root.bubbleSize + bubbleChat.gap
                   : bubbleChat.side === "below" ? bubbleChat.bB - bubbleChat.gap - bubbleChat.chatHeight
                   : bubbleChat.clamp(bubbleChat.bB, bubbleChat.area.h - bubbleChat.chatHeight)
         }
@@ -1139,7 +1164,8 @@ PluginComponent {
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.namespace: "dux-ai:chat"
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive   // type right away
+        // Type right away; when pinned, other apps can have the keyboard too.
+        WlrLayershell.keyboardFocus: root.pinned ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
 
         Rectangle {
             anchors.fill: parent
@@ -1364,7 +1390,8 @@ PluginComponent {
                         onClicked: root.grabSelection()
                     }
                     IconBtn {
-                        icon: "edit_square"
+                        icon: "add"
+                        iconSize: 20
                         enabled: !root.busy
                         onClicked: root.newChat()
                     }
@@ -1377,6 +1404,12 @@ PluginComponent {
                             if (root.view === "history")
                                 root.refreshHistory();
                         }
+                    }
+                    IconBtn {
+                        icon: "keep"            // pin: stay open when you click elsewhere
+                        filled: root.pinned
+                        active: root.pinned
+                        onClicked: root.togglePin()
                     }
                     IconBtn {
                         icon: "settings"
@@ -2205,18 +2238,37 @@ PluginComponent {
                                 Layout.fillWidth: true
                             }
 
-                            // Discrete token counter; hover for details of the last answer.
+                            // Discrete token counter; hover for details of the last answer
+                            // (in a small label above it, so the row doesn't get wider).
                             StyledText {
                                 visible: root.tokens !== null && root.tokens.total > 0
-                                text: !root.tokens ? "" : (tokenMouse.containsMouse && root.tokens.last
-                                    ? root.fmtTokens(root.tokens.last.input) + " in (" + root.fmtTokens(root.tokens.last.cached) + " cached) · " + root.fmtTokens(root.tokens.last.output) + " out"
-                                    : root.fmtTokens(root.tokens.total) + " tok")
+                                text: !root.tokens ? "" : root.fmtTokens(root.tokens.total) + " tok"
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.withAlpha(Theme.onSurfaceVariant, 0.75)
                                 MouseArea {
                                     id: tokenMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
+                                }
+                                Rectangle {
+                                    visible: tokenMouse.containsMouse && root.tokens?.last
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.top
+                                    anchors.bottomMargin: 10
+                                    z: 10
+                                    width: tokenDetail.implicitWidth + 16
+                                    height: tokenDetail.implicitHeight + 10
+                                    radius: 8
+                                    color: Theme.surfaceContainerHighest
+                                    border.width: 1
+                                    border.color: Theme.withAlpha(Theme.onSurface, 0.08)
+                                    StyledText {
+                                        id: tokenDetail
+                                        anchors.centerIn: parent
+                                        text: !root.tokens?.last ? "" : "Last answer: " + root.fmtTokens(root.tokens.last.input) + " in (" + root.fmtTokens(root.tokens.last.cached) + " cached) · " + root.fmtTokens(root.tokens.last.output) + " out"
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.onSurface
+                                    }
                                 }
                             }
 

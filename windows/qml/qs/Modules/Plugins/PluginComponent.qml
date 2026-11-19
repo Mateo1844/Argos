@@ -30,6 +30,7 @@ Item {
     property int iconSize: 22
     property int iconSizeLarge: 26
     property real barThickness: 0
+    property real barSpacing: 0
     property var barConfig: null
     property var parentScreen: Qt.application.screens.length ? Qt.application.screens[0] : null
 
@@ -144,7 +145,7 @@ Item {
 
         // Like a flyout: clicking somewhere else closes it.
         onActiveChanged: {
-            if (!active && visible && !dux.holdPopup) {
+            if (!active && visible && !dux.holdPopup && !(base.pinned ?? false)) {   // pinned: stays open
                 hiddenAt = Date.now();
                 visible = false;
             }
