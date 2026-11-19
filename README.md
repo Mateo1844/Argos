@@ -40,7 +40,7 @@ You don't need an API key.
 | 🛠️ **Agent mode** | Claude can read files and run commands for you, and asks before it changes anything. |
 | 🗂️ **History** | Continue or delete old chats, and see how much disk space they use. |
 | 🪙 **Light on tokens** | A short system prompt, no tools unless needed, and shrunk screenshots. A token counter shows usage. |
-| 📊 **Usage limit** | Shows how much of your 5-hour limit you've used (hover for the weekly limit and reset times). |
+| 📊 **Usage limit** | Shows how much of your 5-hour limit you've used, next to the token counter. |
 
 Both versions share the same chat window, backend and features. Only the way you open them differs.
 

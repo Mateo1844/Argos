@@ -463,14 +463,6 @@ PluginComponent {
         });
     }
 
-    function limitText(w, name) {
-        if (!w)
-            return "";
-        const reset = new Date(w.resets_at * 1000);
-        const sameDay = reset.toDateString() === new Date().toDateString();
-        return name + ": " + Math.round(w.pct) + "% used · resets " + Qt.formatDateTime(reset, sameDay ? "HH:mm" : "ddd HH:mm");
-    }
-
     function fmtTokens(n) {
         n = n || 0;
         return n < 1000 ? String(n) : (n < 100000 ? (n / 1000).toFixed(1) : Math.round(n / 1000)) + "k";
@@ -2264,8 +2256,7 @@ PluginComponent {
                                 Layout.fillWidth: true
                             }
 
-                            // Discrete token counter; hover for details of the last answer
-                            // (in a small label above it, so the row doesn't get wider).
+                            // Discrete counter: tokens in this chat and % of the 5-hour limit used.
                             StyledText {
                                 readonly property bool hasTokens: root.tokens !== null && root.tokens.total > 0
                                 visible: hasTokens || root.fiveHour !== null
@@ -2278,34 +2269,6 @@ PluginComponent {
                                          : "5h " + Math.round(root.fiveHour.pct) + "%")
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.withAlpha(Theme.onSurfaceVariant, 0.75)
-                                MouseArea {
-                                    id: tokenMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                }
-                                Rectangle {
-                                    visible: tokenMouse.containsMouse && tokenDetail.text !== ""
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.top
-                                    anchors.bottomMargin: 10
-                                    z: 10
-                                    width: tokenDetail.implicitWidth + 16
-                                    height: tokenDetail.implicitHeight + 10
-                                    radius: 8
-                                    color: Theme.surfaceContainerHighest
-                                    border.width: 1
-                                    border.color: Theme.withAlpha(Theme.onSurface, 0.08)
-                                    StyledText {
-                                        id: tokenDetail
-                                        anchors.centerIn: parent
-                                        text: [!root.tokens?.last ? "" : "Last answer: " + root.fmtTokens(root.tokens.last.input) + " in (" + root.fmtTokens(root.tokens.last.cached) + " cached) · " + root.fmtTokens(root.tokens.last.output) + " out",
-                                               root.limitText(root.fiveHour, "5-hour limit"),
-                                               root.limitText(root.limits?.seven_day && root.limits.seven_day.resets_at * 1000 > Date.now() ? root.limits.seven_day : null, "Weekly limit")]
-                                              .filter(t => t !== "").join("\n")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.onSurface
-                                    }
-                                }
                             }
 
                             // Send / stop
