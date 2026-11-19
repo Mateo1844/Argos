@@ -450,6 +450,26 @@ PluginComponent {
     property string windowTitle: ""
     readonly property string windowText: windowApp ? windowApp + (windowTitle ? " — " + windowTitle : "") : ""
     property var tokens: null           // { total, context, last: { input, cached, output } }
+    // Subscription usage, as Claude Code reports it with every answer:
+    // { five_hour: { pct, resets_at }, seven_day: { pct, resets_at } } (either may be missing).
+    property var limits: ({})
+    readonly property var fiveHour: limits?.five_hour && limits.five_hour.resets_at * 1000 > Date.now() ? limits.five_hour : null
+
+    function refreshLimits() {
+        Proc.runCommand("duxAi.limits", ["python3", backend, "limits"], out => {
+            const ev = lastJson(out);
+            if (ev?.type === "limits")
+                limits = ev.limits || {};
+        });
+    }
+
+    function limitText(w, name) {
+        if (!w)
+            return "";
+        const reset = new Date(w.resets_at * 1000);
+        const sameDay = reset.toDateString() === new Date().toDateString();
+        return name + ": " + Math.round(w.pct) + "% used · resets " + Qt.formatDateTime(reset, sameDay ? "HH:mm" : "ddd HH:mm");
+    }
 
     function fmtTokens(n) {
         n = n || 0;
@@ -513,8 +533,10 @@ PluginComponent {
     }
 
     onInteractionActiveChanged: {
-        if (interactionActive)
+        if (interactionActive) {
             fetchWindow();
+            refreshLimits();
+        }
     }
 
     // ------------------------------------------------------- popout control --
@@ -818,6 +840,9 @@ PluginComponent {
             permission = { id: ev.id, summary: ev.summary, plain: ev.plain || "", reason: ev.reason || "" };
             scrollToEnd();
             break;
+        case "limits":
+            limits = ev.limits || {};
+            break;
         case "permission_cancel":
             if (permission && permission.id === ev.id)
                 permission = null;
@@ -932,6 +957,7 @@ PluginComponent {
         if (activeToplevel && (activeToplevel.appId || activeToplevel.title))
             lastToplevel = activeToplevel;
         refreshHistory();
+        refreshLimits();
         Proc.runCommand("duxAi.logo", ["python3", backend, "logo"], out => {
             const ev = lastJson(out);
             logoPath = ev?.path || "";
@@ -2241,8 +2267,15 @@ PluginComponent {
                             // Discrete token counter; hover for details of the last answer
                             // (in a small label above it, so the row doesn't get wider).
                             StyledText {
-                                visible: root.tokens !== null && root.tokens.total > 0
-                                text: !root.tokens ? "" : root.fmtTokens(root.tokens.total) + " tok"
+                                readonly property bool hasTokens: root.tokens !== null && root.tokens.total > 0
+                                visible: hasTokens || root.fiveHour !== null
+                                textFormat: Text.StyledText
+                                // "12.3k tok · 5h 23%", the % in orange from 80% and red from 95%.
+                                text: (hasTokens ? root.fmtTokens(root.tokens.total) + " tok" : "")
+                                      + (hasTokens && root.fiveHour ? " · " : "")
+                                      + (!root.fiveHour ? "" : root.fiveHour.pct >= 80
+                                         ? "<font color='" + (root.fiveHour.pct >= 95 ? Theme.error : root.accent) + "'>5h " + Math.round(root.fiveHour.pct) + "%</font>"
+                                         : "5h " + Math.round(root.fiveHour.pct) + "%")
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.withAlpha(Theme.onSurfaceVariant, 0.75)
                                 MouseArea {
@@ -2251,7 +2284,7 @@ PluginComponent {
                                     hoverEnabled: true
                                 }
                                 Rectangle {
-                                    visible: tokenMouse.containsMouse && root.tokens?.last
+                                    visible: tokenMouse.containsMouse && tokenDetail.text !== ""
                                     anchors.right: parent.right
                                     anchors.bottom: parent.top
                                     anchors.bottomMargin: 10
@@ -2265,7 +2298,10 @@ PluginComponent {
                                     StyledText {
                                         id: tokenDetail
                                         anchors.centerIn: parent
-                                        text: !root.tokens?.last ? "" : "Last answer: " + root.fmtTokens(root.tokens.last.input) + " in (" + root.fmtTokens(root.tokens.last.cached) + " cached) · " + root.fmtTokens(root.tokens.last.output) + " out"
+                                        text: [!root.tokens?.last ? "" : "Last answer: " + root.fmtTokens(root.tokens.last.input) + " in (" + root.fmtTokens(root.tokens.last.cached) + " cached) · " + root.fmtTokens(root.tokens.last.output) + " out",
+                                               root.limitText(root.fiveHour, "5-hour limit"),
+                                               root.limitText(root.limits?.seven_day && root.limits.seven_day.resets_at * 1000 > Date.now() ? root.limits.seven_day : null, "Weekly limit")]
+                                              .filter(t => t !== "").join("\n")
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.onSurface
                                     }

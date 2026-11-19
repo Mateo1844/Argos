@@ -105,6 +105,63 @@ def now():
     return int(time.time())
 
 
+# --------------------------------------------------------- usage limits --
+# Claude Code reports how much of your subscription limits you've used with
+# every answer (a "rate_limit_event"). Argos keeps the last numbers in
+# limits.json so they're there when the chat opens.
+
+def parse_limits(info):
+    """{"five_hour": {"pct": 23.5, "resets_at": epoch_s}, "seven_day": {...}} from rate_limit_info."""
+    def window(util, resets):
+        if util is None:
+            return None
+        util = float(util)
+        pct = util * 100 if util <= 1 else util          # Claude Code sends 0-1
+        resets = int(resets or 0)
+        if resets > 10**12:                              # milliseconds -> seconds
+            resets //= 1000
+        return {"pct": round(min(pct, 100), 1), "resets_at": resets}
+
+    limits = {}
+    for key, w in (info.get("unifiedWindows") or {}).items():
+        if key in ("five_hour", "seven_day") and isinstance(w, dict):
+            win = window(w.get("utilization"), w.get("resetsAt"))
+            if win:
+                limits[key] = win
+    # Older Claude Code: one window per event, utilization only near the limit.
+    kind = info.get("rateLimitType")
+    if kind in ("five_hour", "seven_day") and kind not in limits:
+        win = window(info.get("utilization"), info.get("resetsAt"))
+        if win:
+            limits[kind] = win
+    return limits
+
+
+def save_limits(limits):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    path = DATA_DIR / "limits.json"
+    try:
+        old = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        old = {}
+    old.update(limits)
+    path.write_text(json.dumps(old), encoding="utf-8")
+
+
+def current_limits():
+    """Saved limits, without windows that have reset since."""
+    try:
+        saved = json.loads((DATA_DIR / "limits.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in saved.items() if isinstance(v, dict) and v.get("resets_at", 0) > now()}
+
+
+def cmd_limits(_args):
+    emit(type="limits", limits=current_limits())
+    return 0
+
+
 # --------------------------------------------------------------- chats -----
 
 def chat_path(chat_id):
@@ -603,6 +660,11 @@ def cmd_ask(args):
                     send_to_claude({"type": "control_response", "response": {
                         "subtype": "error", "request_id": ev.get("request_id"),
                         "error": "Not supported by Argos"}})
+            elif kind == "rate_limit_event":
+                limits = parse_limits(ev.get("rate_limit_info") or {})
+                if limits:
+                    save_limits(limits)
+                    emit(type="limits", limits=current_limits())
             elif kind == "control_cancel_request":
                 pending.pop(ev.get("request_id"), None)
                 emit(type="permission_cancel", id=ev.get("request_id"))
@@ -964,6 +1026,7 @@ def main(argv=None):
     ask.set_defaults(func=cmd_ask)
 
     sub.add_parser("list").set_defaults(func=cmd_list)
+    sub.add_parser("limits", help="last known 5-hour / weekly usage").set_defaults(func=cmd_limits)
     load = sub.add_parser("load")
     load.add_argument("id")
     load.set_defaults(func=cmd_load)

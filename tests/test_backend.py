@@ -94,6 +94,24 @@ class BackendTest(unittest.TestCase):
         argv = self.calls()[0]["argv"]
         self.assertEqual(argv[argv.index("--tools") + 1], "WebSearch,WebFetch")
 
+    def test_usage_limits_are_reported_and_remembered(self):
+        events = self.run_backend("ask", "--", "hi")
+        limits = [e for e in events if e["type"] == "limits"][-1]["limits"]
+        self.assertEqual(limits["five_hour"]["pct"], 23.5)
+        self.assertEqual(limits["seven_day"]["pct"], 41.0)
+        saved = self.run_backend("limits")[-1]["limits"]
+        self.assertEqual(saved["five_hour"]["pct"], 23.5)
+
+    def test_limits_parsing(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("duxai", BACKEND)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        # older format: one window, utilization only near the limit, resetsAt in ms
+        self.assertEqual(mod.parse_limits({"rateLimitType": "five_hour", "utilization": 0.85, "resetsAt": 1790000000000}),
+                         {"five_hour": {"pct": 85.0, "resets_at": 1790000000}})
+        self.assertEqual(mod.parse_limits({"status": "allowed", "rateLimitType": "five_hour", "resetsAt": 1}), {})
+
     def test_login_error_is_friendly(self):
         env = dict(self.env, FAKE_CLAUDE_FAIL="1")
         events = self.run_backend("ask", "--", "hi", env=env)

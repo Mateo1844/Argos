@@ -63,6 +63,12 @@ for part in answer:
         import time
         time.sleep(2)
 out({"type": "assistant", "message": {"content": [{"type": "text", "text": "".join(answer)}]}})
+# Like Claude Code 2.1.28x: subscription usage with every answer (utilization 0-1, resetsAt in seconds).
+import time as _t
+out({"type": "rate_limit_event", "rate_limit_info": {
+    "status": "allowed", "resetsAt": int(_t.time()) + 3600, "rateLimitType": "five_hour",
+    "unifiedWindows": {"five_hour": {"utilization": 0.235, "resetsAt": int(_t.time()) + 3600},
+                       "seven_day": {"utilization": 0.41, "resetsAt": int(_t.time()) + 86400}}}})
 out({"type": "result", "subtype": "success", "is_error": False, "result": "".join(answer),
      "session_id": session, "total_cost_usd": 0.0012,
      "usage": {"input_tokens": 120, "output_tokens": 8}})
