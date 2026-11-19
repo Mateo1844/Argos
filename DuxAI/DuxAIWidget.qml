@@ -2261,12 +2261,12 @@ PluginComponent {
                                 readonly property bool hasTokens: root.tokens !== null && root.tokens.total > 0
                                 visible: hasTokens || root.fiveHour !== null
                                 textFormat: Text.StyledText
-                                // "12.3k tok · 5h 23%", the % in orange from 80% and red from 95%.
+                                // "12.3k tok · 23%" (% of the 5-hour session limit), orange from 80%, red from 95%.
                                 text: (hasTokens ? root.fmtTokens(root.tokens.total) + " tok" : "")
                                       + (hasTokens && root.fiveHour ? " · " : "")
                                       + (!root.fiveHour ? "" : root.fiveHour.pct >= 80
-                                         ? "<font color='" + (root.fiveHour.pct >= 95 ? Theme.error : root.accent) + "'>5h " + Math.round(root.fiveHour.pct) + "%</font>"
-                                         : "5h " + Math.round(root.fiveHour.pct) + "%")
+                                         ? "<font color='" + (root.fiveHour.pct >= 95 ? Theme.error : root.accent) + "'>" + Math.round(root.fiveHour.pct) + "%</font>"
+                                         : Math.round(root.fiveHour.pct) + "%")
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.withAlpha(Theme.onSurfaceVariant, 0.75)
                             }
