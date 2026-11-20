@@ -99,6 +99,8 @@ Item {
                                 : dux.workArea();
         placePopup();
         if (popupAnchor) {
+            frame.scale = 0.85;          // start state before it shows, so it never flashes at full size
+            frame.opacity = 0;
             growAnim.restart();          // grows out of the bubble
         } else {
             frame.scale = 1;

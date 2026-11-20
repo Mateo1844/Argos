@@ -6,6 +6,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -252,8 +253,10 @@ PluginComponent {
         id: face
         property bool hovered: false
         property bool closeMode: false     // docked on the open chat: shows ✕
+        property bool backdrop: true
 
         Rectangle {
+            visible: face.backdrop
             anchors.centerIn: parent
             width: 48
             height: 48
@@ -1161,10 +1164,12 @@ PluginComponent {
 
     // The chat, opened from the floating bubble (DMS). Same content as the bar
     // popout, but on the overlay layer, so it shows above fullscreen video.
-    // The bubble docks onto it: half over its top or bottom edge, flush with
-    // its side (so it can sit tight in a screen corner), and turns into ✕.
-    // It stays open when you click elsewhere and lets other apps have the
-    // keyboard. ✕ or Esc closes it; dragging ✕ moves bubble and chat.
+    // The bubble stays where it is and becomes a tab of the chat (like a
+    // browser tab, but rounder): the chat sits right next to it, flush with
+    // its side, and the outline of chat + tab is drawn as one shape with
+    // curved corners where they meet. ✕ or Esc closes it; dragging ✕ moves
+    // both. It stays open when you click elsewhere and lets other apps have
+    // the keyboard.
     PanelWindow {
         id: bubbleChat
         visible: root.bubbleChatOpen && !root.onWindows
@@ -1181,6 +1186,8 @@ PluginComponent {
             if (visible) {
                 grabKeys = true;
                 keysTimer.restart();
+                dockFrame.scale = 0.85;      // start state first, so it never flashes at full size
+                dockFrame.opacity = 0;
                 growAnim.restart();
             }
         }
@@ -1192,7 +1199,7 @@ PluginComponent {
 
         readonly property real pad: PopoutMetrics.contentPadding
         readonly property var area: root.screenRect(root.bubbleScreen)
-        readonly property real s: root.bubbleSize
+        readonly property real s: root.bubbleSize          // the tab is the bubble's square
         readonly property real cw: root.popoutWidth
         readonly property real ch: Math.min((chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad, area.h - 16)
         // The bubble, measured from this screen's top-left corner.
@@ -1200,104 +1207,162 @@ PluginComponent {
         readonly property real by: area.h - bubble.margins.bottom - s
         readonly property bool rightHalf: bx + s / 2 > area.w / 2
         readonly property bool lowerHalf: by + s / 2 > area.h / 2
-        readonly property bool fitsAbove: by + s / 2 - ch >= 0
-        readonly property bool fitsBelow: by + s / 2 + ch <= area.h
-        // Chat above the bubble (bubble on its bottom edge), below it, or beside it.
+        readonly property bool fitsAbove: by - ch >= 0
+        readonly property bool fitsBelow: by + s + ch <= area.h
+        // Chat above the bubble (tab hangs from its bottom edge), below it, or beside it.
         readonly property string mode: lowerHalf ? (fitsAbove ? "above" : fitsBelow ? "below" : "side")
                                                  : (fitsBelow ? "below" : fitsAbove ? "above" : "side")
         function clamp(v, lo, hi) {
             return Math.min(Math.max(v, lo), Math.max(lo, hi));
         }
-        // The chat's top-left corner on the screen.
-        readonly property real cx: mode === "side" ? (rightHalf ? bx + s / 2 - cw : bx + s / 2)
+        // The chat's top-left corner on the screen: flush with the bubble's outer side.
+        readonly property real cx: mode === "side" ? (rightHalf ? bx - cw : bx + s)
                                                    : clamp(rightHalf ? bx + s - cw : bx, 0, area.w - cw)
-        readonly property real cy: mode === "above" ? by + s / 2 - ch
-                                 : mode === "below" ? by + s / 2
+        readonly property real cy: mode === "above" ? by - ch
+                                 : mode === "below" ? by + s
                                  : clamp(lowerHalf ? by + s - ch : by, 0, area.h - ch)
-        // The window holds the chat and the docked bubble.
-        readonly property real wx: Math.min(cx, bx)
-        readonly property real wy: Math.min(cy, by)
+        // Where the tab sits along the chat's edge. Too close to a corner for
+        // the curves to fit: snap it flush with that corner (a few pixels at most).
+        readonly property real edgeLen: mode === "side" ? ch : cw
+        readonly property real tabU: {
+            const u = mode === "side" ? by - cy : bx - cx;
+            const room = Theme.windowRadius + 12;
+            return u + s > edgeLen - room ? edgeLen - s : u < room ? 0 : u;
+        }
+        // The tab on the screen.
+        readonly property real tx: mode === "side" ? bx : cx + tabU
+        readonly property real ty: mode === "side" ? cy + tabU : by
+        // The window holds the chat and the tab.
+        readonly property real wx: Math.min(cx, tx)
+        readonly property real wy: Math.min(cy, ty)
         margins { left: bubbleChat.wx; top: bubbleChat.wy }
-        implicitWidth: Math.max(cx + cw, bx + s) - wx
-        implicitHeight: Math.max(cy + ch, by + s) - wy
-        // Only the chat and the bubble take clicks, not the empty corners around them.
+        implicitWidth: Math.max(cx + cw, tx + s) - wx
+        implicitHeight: Math.max(cy + ch, ty + s) - wy
+        // Only the chat and the tab take clicks.
         mask: Region {
             item: chatFrame
             Region { item: dockBubble }
         }
 
+        // Outline of chat + tab as an SVG path, in window coordinates. Worked
+        // out for "tab below the chat" (u along the chat's edge, v outwards),
+        // then turned/mirrored to the real side.
+        readonly property string outline: {
+            const R = Theme.windowRadius, f = 12, T = s, L = s;
+            const side = mode === "side";
+            const E = edgeLen;                           // length of the edge with the tab
+            const D = side ? cw : ch;                    // depth of the chat
+            const tu = tabU;                             // where the tab starts along that edge
+            const flushStart = tu <= 0.5, flushEnd = tu + T >= E - 0.5;
+            const W = D + L;
+            // canonical (u, v) -> window (x, y); "flip" = the drawing is mirrored (arcs turn the other way)
+            const map = mode === "above" ? (u, v) => [u, v]
+                      : mode === "below" ? (u, v) => [u, W - v]
+                      : rightHalf ? (u, v) => [v, u]         // chat left of the tab
+                      : (u, v) => [W - v, u];                // chat right of the tab
+            const flip = mode === "below" || (side && rightHalf);
+            const pt = (u, v) => { const p = map(u, v); return p[0].toFixed(2) + " " + p[1].toFixed(2); };
+            const arc = (r, u, v, sweep) => "A " + r + " " + r + " 0 0 " + (flip ? 1 - sweep : sweep) + " " + pt(u, v) + " ";
+            let d = "M " + pt(R, 0) + " L " + pt(E - R, 0) + " " + arc(R, E, R, 1);
+            if (flushEnd) {
+                d += "L " + pt(E, W - T / 2) + " ";
+            } else {
+                d += "L " + pt(E, D - R) + " " + arc(R, E - R, D, 1);
+                d += "L " + pt(tu + T + f, D) + " " + arc(f, tu + T, D + f, 0);
+                d += "L " + pt(tu + T, W - T / 2) + " ";
+            }
+            d += arc(T / 2, tu, W - T / 2, 1);           // the tab's round end
+            if (flushStart) {
+                d += "L " + pt(0, R) + " ";
+            } else {
+                d += "L " + pt(tu, D + f) + " " + arc(f, tu - f, D, 0);
+                d += "L " + pt(R, D) + " " + arc(R, 0, D - R, 1);
+                d += "L " + pt(0, R) + " ";
+            }
+            return d + arc(R, R, 0, 1) + "Z";
+        }
+
         Item {
-            id: chatFrame
-            x: bubbleChat.cx - bubbleChat.wx
-            y: bubbleChat.cy - bubbleChat.wy
-            width: bubbleChat.cw
-            height: bubbleChat.ch
+            id: dockFrame
+            anchors.fill: parent
             opacity: bubbleMouse.dragged ? 0.35 : 1
-            // Grows out of the bubble's side.
+            // Grows out of the tab.
             transformOrigin: bubbleChat.mode === "side" ? (bubbleChat.rightHalf ? Item.Right : Item.Left)
                            : bubbleChat.mode === "above" ? (bubbleChat.rightHalf ? Item.BottomRight : Item.BottomLeft)
                            : (bubbleChat.rightHalf ? Item.TopRight : Item.TopLeft)
             ParallelAnimation {
                 id: growAnim
-                NumberAnimation { target: chatFrame; property: "scale"; from: 0.85; to: 1; duration: 160; easing.type: Easing.OutCubic }
-                NumberAnimation { target: chatFrame; property: "opacity"; from: 0; to: 1; duration: 120 }
+                NumberAnimation { target: dockFrame; property: "scale"; from: 0.85; to: 1; duration: 160; easing.type: Easing.OutCubic }
+                NumberAnimation { target: dockFrame; property: "opacity"; from: 0; to: 1; duration: 120 }
             }
 
-            Rectangle {
+            Shape {
                 anchors.fill: parent
-                radius: Theme.windowRadius
-                color: Theme.surfaceContainer
-                border.width: 1
-                border.color: Theme.withAlpha(Theme.onSurface, 0.08)
-            }
-            Loader {
-                id: chatLoader
-                x: bubbleChat.pad
-                y: bubbleChat.pad
-                width: parent.width - 2 * bubbleChat.pad
-                active: bubbleChat.visible
-                focus: true
-                sourceComponent: root.popoutContent
-                Keys.onEscapePressed: root.bubbleChatOpen = false
-            }
-        }
-
-        // The bubble, docked: ✕ closes the chat; drag to move both.
-        Item {
-            id: dockBubble
-            x: bubbleChat.bx - bubbleChat.wx
-            y: bubbleChat.by - bubbleChat.wy
-            width: bubbleChat.s
-            height: bubbleChat.s
-
-            BubbleFace {
-                anchors.fill: parent
-                closeMode: true
-                hovered: dockMouse.containsMouse
-                opacity: bubbleMouse.dragged ? 0.25 : 1
-            }
-            MouseArea {
-                id: dockMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                cursorShape: bubbleMouse.dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
-                onPressed: mouse => bubbleMouse.beginDrag(mouse.x, mouse.y)
-                onPositionChanged: mouse => {
-                    if (pressed && mouse.buttons === Qt.LeftButton)
-                        bubbleMouse.moveDrag(mouse.x, mouse.y);
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                    fillColor: Theme.surfaceContainer
+                    strokeColor: root.showBorder ? Theme.withAlpha(root.accent, 0.45) : Theme.withAlpha(Theme.onSurface, 0.08)
+                    strokeWidth: 1
+                    PathSvg { path: bubbleChat.outline }
                 }
-                onCanceled: {
-                    if (bubbleMouse.dragged)
-                        bubbleMouse.finishDrag();
+            }
+
+            Item {
+                id: chatFrame
+                x: bubbleChat.cx - bubbleChat.wx
+                y: bubbleChat.cy - bubbleChat.wy
+                width: bubbleChat.cw
+                height: bubbleChat.ch
+                Loader {
+                    id: chatLoader
+                    x: bubbleChat.pad
+                    y: bubbleChat.pad
+                    width: parent.width - 2 * bubbleChat.pad
+                    active: bubbleChat.visible
+                    focus: true
+                    sourceComponent: root.popoutContent
+                    Keys.onEscapePressed: root.bubbleChatOpen = false
                 }
-                onReleased: mouse => {
-                    if (bubbleMouse.dragged)
-                        bubbleMouse.finishDrag();
-                    else if (mouse.button === Qt.RightButton)
-                        root.startCapture(true);
-                    else
-                        root.bubbleChatOpen = false;
+            }
+
+            // The tab: ✕ closes the chat; drag to move both.
+            Item {
+                id: dockBubble
+                x: bubbleChat.tx - bubbleChat.wx
+                y: bubbleChat.ty - bubbleChat.wy
+                width: bubbleChat.s
+                height: bubbleChat.s
+
+                BubbleFace {
+                    anchors.fill: parent
+                    closeMode: true
+                    backdrop: false
+                    hovered: dockMouse.containsMouse
+                    opacity: bubbleMouse.dragged ? 0.25 : 1
+                }
+                MouseArea {
+                    id: dockMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    cursorShape: bubbleMouse.dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                    onPressed: mouse => bubbleMouse.beginDrag(mouse.x, mouse.y)
+                    onPositionChanged: mouse => {
+                        if (pressed && mouse.buttons === Qt.LeftButton)
+                            bubbleMouse.moveDrag(mouse.x, mouse.y);
+                    }
+                    onCanceled: {
+                        if (bubbleMouse.dragged)
+                            bubbleMouse.finishDrag();
+                    }
+                    onReleased: mouse => {
+                        if (bubbleMouse.dragged)
+                            bubbleMouse.finishDrag();
+                        else if (mouse.button === Qt.RightButton)
+                            root.startCapture(true);
+                        else
+                            root.bubbleChatOpen = false;
+                    }
                 }
             }
         }
@@ -1403,7 +1468,7 @@ PluginComponent {
 
             // Thin outline along the edge of the popout (Settings: "Window border").
             Rectangle {
-                visible: root.showBorder
+                visible: root.showBorder && !(root.bubbleChatOpen && !root.onWindows)   // docked chat: drawn around chat + tab
                 anchors.fill: parent
                 anchors.margins: -PopoutMetrics.contentPadding
                 radius: Theme.windowRadius
