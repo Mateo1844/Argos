@@ -63,6 +63,8 @@ Item {
             showPopup();
     }
 
+    property int growOrigin: Item.BottomRight
+
     // Screen area the chat is placed in (without the taskbar). Kept while it's open,
     // so it can be placed again when its size changes.
     property rect popupArea: Qt.rect(0, 0, 1920, 1040)
@@ -75,19 +77,15 @@ Item {
         const clampX = x => Math.min(Math.max(x, area.x), area.x + area.width - w);
         const clampY = y => Math.min(Math.max(y, area.y), area.y + area.height - h);
         if (popupAnchor) {
-            // Next to the bubble: above it, below it, or else beside it (never on top of it).
+            // In the bubble's place (the bubble hides meanwhile): the chat's corner
+            // goes where the bubble was, so it looks like the bubble grew into it.
             const a = popupAnchor;
-            if (a.y - gap - h >= area.y) {
-                popup.x = clampX(a.x + a.size - w);
-                popup.y = a.y - gap - h;
-            } else if (a.y + a.size + gap + h <= area.y + area.height) {
-                popup.x = clampX(a.x + a.size - w);
-                popup.y = a.y + a.size + gap;
-            } else {
-                const left = a.x - gap - w, right = a.x + a.size + gap;
-                popup.x = left >= area.x || right + w > area.x + area.width ? clampX(left) : right;
-                popup.y = clampY(a.y + a.size - h);
-            }
+            const rightHalf = a.x + a.size / 2 > area.x + area.width / 2;
+            const lowerHalf = a.y + a.size / 2 > area.y + area.height / 2;
+            popup.x = clampX(rightHalf ? a.x + a.size - w : a.x);
+            popup.y = clampY(lowerHalf ? a.y + a.size - h : a.y);
+            growOrigin = lowerHalf ? (rightHalf ? Item.BottomRight : Item.BottomLeft)
+                                   : (rightHalf ? Item.TopRight : Item.TopLeft);
         } else {
             // Bottom-right of the screen with the mouse, just above the taskbar.
             popup.x = area.x + area.width - w - 12;
@@ -100,6 +98,12 @@ Item {
         popupArea = popupAnchor ? dux.workAreaAt(popupAnchor.x + popupAnchor.size / 2, popupAnchor.y + popupAnchor.size / 2)
                                 : dux.workArea();
         placePopup();
+        if (popupAnchor) {
+            growAnim.restart();          // grows out of the bubble
+        } else {
+            frame.scale = 1;
+            frame.opacity = 1;
+        }
         popup.visible = true;
         popup.raise();
         popup.requestActivate();
@@ -155,23 +159,34 @@ Item {
                 hiddenAt = Date.now();
         }
 
-        Rectangle {
+        Item {
+            id: frame
             width: popup.width
             height: popup.height
-            radius: Theme.windowRadius
-            color: Theme.surfaceContainer
-            border.width: 1
-            border.color: Theme.withAlpha(Theme.onSurface, 0.08)
-        }
+            transformOrigin: base.growOrigin
+            ParallelAnimation {
+                id: growAnim
+                NumberAnimation { target: frame; property: "scale"; from: 0.85; to: 1; duration: 160; easing.type: Easing.OutCubic }
+                NumberAnimation { target: frame; property: "opacity"; from: 0; to: 1; duration: 120 }
+            }
 
-        Loader {
-            id: content
-            x: popup.pad
-            y: popup.pad
-            width: popup.width - 2 * popup.pad
-            focus: true
-            sourceComponent: base.popoutContent
-            Keys.onEscapePressed: base.closePopout()
+            Rectangle {
+                anchors.fill: parent
+                radius: Theme.windowRadius
+                color: Theme.surfaceContainer
+                border.width: 1
+                border.color: Theme.withAlpha(Theme.onSurface, 0.08)
+            }
+
+            Loader {
+                id: content
+                x: popup.pad
+                y: popup.pad
+                width: popup.width - 2 * popup.pad
+                focus: true
+                sourceComponent: base.popoutContent
+                Keys.onEscapePressed: base.closePopout()
+            }
         }
     }
 }

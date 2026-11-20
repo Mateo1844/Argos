@@ -251,6 +251,7 @@ PluginComponent {
     component BubbleFace: Item {
         id: face
         property bool hovered: false
+        property bool closeMode: false     // docked on the open chat: shows ✕
 
         Rectangle {
             anchors.centerIn: parent
@@ -268,6 +269,7 @@ PluginComponent {
             logoScale: root.pillTransparent ? 0.75 : 0.62
             logoPath: root.logoPath
             hasLogo: root.hasLogo
+            visible: !face.closeMode
             Behavior on size {
                 NumberAnimation { duration: 100 }
             }
@@ -277,6 +279,25 @@ PluginComponent {
                 onStopped: faceCircle.opacity = 1
                 NumberAnimation { to: 0.5; duration: 600; easing.type: Easing.InOutQuad }
                 NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutQuad }
+            }
+        }
+        Rectangle {
+            visible: face.closeMode
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: -1
+            width: face.hovered ? 46 : 44
+            height: width
+            radius: width / 2
+            color: root.pillTransparent ? Theme.surfaceContainerHighest : root.accent
+            DIcon {
+                anchors.centerIn: parent
+                name: "close"
+                size: 24
+                color: "white"
+                rotation: face.closeMode ? 0 : -90
+                Behavior on rotation {
+                    NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                }
             }
         }
     }
@@ -536,26 +557,18 @@ PluginComponent {
     // The chat can be open in two places: the normal DMS popout (bar button)
     // or the bubble chat (floating bubble, shown above fullscreen video).
     property bool bubbleChatOpen: false
+    // The chat that belongs to the bubble is on screen (DMS: bubble chat; Windows: popup opened from the bubble).
+    readonly property bool bubbleChatShown: onWindows ? (interactionActive && popupAnchor !== null && popupAnchor !== undefined)
+                                                      : bubbleChatOpen
 
-    // Pinned: the chat stays open when you click somewhere else (close it with
-    // Esc, the bar button / tray icon or the bubble). DMS's own popout always
-    // closes on an outside click, so on DMS a pinned chat lives in Argos's own
-    // window: under the bar, or next to the bubble when that's on.
-    property bool pinned: pluginData.pinned ?? false
-    pillClickAction: (!root.onWindows && root.pinned) ? (() => root.bubbleChatOpen = !root.bubbleChatOpen) : null
+    // Windows: pinned = the chat stays open when you click somewhere else
+    // (close it with Esc, the tray icon or the shortcut). Not on DMS: there
+    // the bubble chat always stays open and lets other apps have the keyboard.
+    property bool pinned: onWindows && (pluginData.pinned ?? false)
 
     function togglePin() {
         pinned = !pinned;
         pluginService?.savePluginData("duxAi", "pinned", pinned);
-        if (root.onWindows)
-            return;
-        if (pinned && root.interactionActive) {          // move from DMS's popout to our own window
-            root.closePopout();
-            bubbleChatOpen = true;
-        } else if (!pinned && bubbleChatOpen && !root.floatingBubble) {
-            bubbleChatOpen = false;                       // back to DMS's normal popout
-            Qt.callLater(root.triggerPopout);
-        }
     }
     property bool reopenInBubble: false     // after a screenshot/selection, come back in the bubble chat
     readonly property bool chatVisible: interactionActive || bubbleChatOpen
@@ -602,7 +615,7 @@ PluginComponent {
     }
 
     function openPopout() {
-        if (reopenInBubble || bubbleChatOpen || (pinned && !onWindows)) {
+        if (reopenInBubble || bubbleChatOpen) {
             reopenInBubble = false;
             openBubbleChat();
             return;
@@ -1049,7 +1062,9 @@ PluginComponent {
     // moment later, so mouse positions are measured from the wrong place.
     PanelWindow {
         id: bubble
-        visible: root.floatingBubble && !root.hidingForScreenshot
+        // Hidden while its chat is open: on DMS the chat shows it docked on its
+        // edge (as ✕); on Windows the chat takes the bubble's place.
+        visible: root.floatingBubble && !root.hidingForScreenshot && !root.bubbleChatShown
         screen: root.bubbleScreen ?? null
         color: "transparent"
         anchors { bottom: true; right: true }
@@ -1082,17 +1097,24 @@ PluginComponent {
             property real ghostY: 0
             property bool dragged: false
 
-            onPressed: mouse => {
-                pressX = mouse.x;
-                pressY = mouse.y;
+            onPressed: mouse => beginDrag(mouse.x, mouse.y)
+            onPositionChanged: mouse => {
+                if (pressed && mouse.buttons === Qt.LeftButton)
+                    moveDrag(mouse.x, mouse.y);
+            }
+
+            // Shared with the bubble docked on the chat (DMS): positions are
+            // in the coordinates of whichever window was pressed; neither
+            // window moves during the drag.
+            function beginDrag(x, y) {
+                pressX = x;
+                pressY = y;
                 startRight = bubble.margins.right;
                 startBottom = bubble.margins.bottom;
                 dragged = false;
             }
-            onPositionChanged: mouse => {
-                if (!pressed || mouse.buttons !== Qt.LeftButton)
-                    return;
-                const dx = mouse.x - pressX, dy = mouse.y - pressY;
+            function moveDrag(mx, my) {
+                const dx = mx - pressX, dy = my - pressY;
                 if (!dragged && Math.abs(dx) + Math.abs(dy) < 4)
                     return;
                 dragged = true;
@@ -1118,9 +1140,6 @@ PluginComponent {
                 pluginService?.savePluginData("duxAi", "bubbleRight", Math.round(root.bubbleRight));
                 pluginService?.savePluginData("duxAi", "bubbleBottom", Math.round(root.bubbleBottom));
                 dragged = false;
-                // Windows: an open chat follows the bubble (on DMS it's tied to it already).
-                if (root.onWindows && root.interactionActive && root.popupAnchor)
-                    Qt.callLater(() => root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, true));
             }
             // If the system takes the mouse away mid-drag, still put the bubble where it was.
             onCanceled: {
@@ -1142,66 +1161,145 @@ PluginComponent {
 
     // The chat, opened from the floating bubble (DMS). Same content as the bar
     // popout, but on the overlay layer, so it shows above fullscreen video.
-    // Placed next to the bubble: above it if there's room, otherwise below.
-    // Esc or clicking the bubble again closes it.
+    // The bubble docks onto it: half over its top or bottom edge, flush with
+    // its side (so it can sit tight in a screen corner), and turns into ✕.
+    // It stays open when you click elsewhere and lets other apps have the
+    // keyboard. ✕ or Esc closes it; dragging ✕ moves bubble and chat.
     PanelWindow {
         id: bubbleChat
         visible: root.bubbleChatOpen && !root.onWindows
-        // No bubble: a pinned chat sits under the bar, top-right.
-        readonly property bool atBar: !root.floatingBubble
-        screen: (atBar ? root.parentScreen : root.bubbleScreen) ?? null
+        screen: root.bubbleScreen ?? null
         color: "transparent"
-        anchors { top: bubbleChat.atBar; bottom: !bubbleChat.atBar; right: true }
-        readonly property real pad: PopoutMetrics.contentPadding
-        readonly property var area: root.screenRect(atBar ? root.parentScreen : root.bubbleScreen)
-        // Never taller than the screen.
-        readonly property real chatHeight: Math.min((chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad,
-                                                    area.h - 16 - (atBar ? margins.top : 0))
-        // Everything in "distance from the right / bottom screen edge", like the margins.
-        readonly property real bR: bubble.margins.right
-        readonly property real bB: bubble.margins.bottom
-        readonly property real gap: 8
-        // Next to the bubble: above it, below it, or else beside it (never on top of it).
-        readonly property string side: bB + root.bubbleSize + gap + chatHeight <= area.h ? "above"
-                                       : bB - gap - chatHeight >= 0 ? "below"
-                                       : bR + root.bubbleSize + gap + root.popoutWidth <= area.w || bR - gap - root.popoutWidth < 0 ? "left"
-                                       : "right"
-        function clamp(v, max) {
-            return Math.min(Math.max(v, 0), Math.max(0, max));
-        }
-        margins {
-            top: root.barThickness + root.barSpacing + 4
-            right: bubbleChat.atBar ? 12 : bubbleChat.side === "left" ? bubbleChat.clamp(bubbleChat.bR + root.bubbleSize + bubbleChat.gap, bubbleChat.area.w - root.popoutWidth)
-                 : bubbleChat.side === "right" ? bubbleChat.bR - bubbleChat.gap - root.popoutWidth
-                 : bubbleChat.clamp(bubbleChat.bR, bubbleChat.area.w - root.popoutWidth)
-            bottom: bubbleChat.atBar ? 0 : bubbleChat.side === "above" ? bubbleChat.bB + root.bubbleSize + bubbleChat.gap
-                  : bubbleChat.side === "below" ? bubbleChat.bB - bubbleChat.gap - bubbleChat.chatHeight
-                  : bubbleChat.clamp(bubbleChat.bB, bubbleChat.area.h - bubbleChat.chatHeight)
-        }
-        implicitWidth: root.popoutWidth
-        implicitHeight: chatHeight
+        anchors { top: true; left: true }
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.namespace: "dux-ai:chat"
         WlrLayershell.layer: WlrLayer.Overlay
-        // Type right away; when pinned, other apps can have the keyboard too.
-        WlrLayershell.keyboardFocus: root.pinned ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
-
-        Rectangle {
-            anchors.fill: parent
-            radius: Theme.windowRadius
-            color: Theme.surfaceContainer
-            border.width: 1
-            border.color: Theme.withAlpha(Theme.onSurface, 0.08)
+        // Keyboard right away, then "on demand": clicking another window gives it the keyboard.
+        WlrLayershell.keyboardFocus: grabKeys ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
+        property bool grabKeys: true
+        onVisibleChanged: {
+            if (visible) {
+                grabKeys = true;
+                keysTimer.restart();
+                growAnim.restart();
+            }
         }
-        Loader {
-            id: chatLoader
-            x: bubbleChat.pad
-            y: bubbleChat.pad
-            width: parent.width - 2 * bubbleChat.pad
-            active: bubbleChat.visible
-            focus: true
-            sourceComponent: root.popoutContent
-            Keys.onEscapePressed: root.bubbleChatOpen = false
+        Timer {
+            id: keysTimer
+            interval: 600
+            onTriggered: bubbleChat.grabKeys = false
+        }
+
+        readonly property real pad: PopoutMetrics.contentPadding
+        readonly property var area: root.screenRect(root.bubbleScreen)
+        readonly property real s: root.bubbleSize
+        readonly property real cw: root.popoutWidth
+        readonly property real ch: Math.min((chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad, area.h - 16)
+        // The bubble, measured from this screen's top-left corner.
+        readonly property real bx: area.w - bubble.margins.right - s
+        readonly property real by: area.h - bubble.margins.bottom - s
+        readonly property bool rightHalf: bx + s / 2 > area.w / 2
+        readonly property bool lowerHalf: by + s / 2 > area.h / 2
+        readonly property bool fitsAbove: by + s / 2 - ch >= 0
+        readonly property bool fitsBelow: by + s / 2 + ch <= area.h
+        // Chat above the bubble (bubble on its bottom edge), below it, or beside it.
+        readonly property string mode: lowerHalf ? (fitsAbove ? "above" : fitsBelow ? "below" : "side")
+                                                 : (fitsBelow ? "below" : fitsAbove ? "above" : "side")
+        function clamp(v, lo, hi) {
+            return Math.min(Math.max(v, lo), Math.max(lo, hi));
+        }
+        // The chat's top-left corner on the screen.
+        readonly property real cx: mode === "side" ? (rightHalf ? bx + s / 2 - cw : bx + s / 2)
+                                                   : clamp(rightHalf ? bx + s - cw : bx, 0, area.w - cw)
+        readonly property real cy: mode === "above" ? by + s / 2 - ch
+                                 : mode === "below" ? by + s / 2
+                                 : clamp(lowerHalf ? by + s - ch : by, 0, area.h - ch)
+        // The window holds the chat and the docked bubble.
+        readonly property real wx: Math.min(cx, bx)
+        readonly property real wy: Math.min(cy, by)
+        margins { left: bubbleChat.wx; top: bubbleChat.wy }
+        implicitWidth: Math.max(cx + cw, bx + s) - wx
+        implicitHeight: Math.max(cy + ch, by + s) - wy
+        // Only the chat and the bubble take clicks, not the empty corners around them.
+        mask: Region {
+            item: chatFrame
+            Region { item: dockBubble }
+        }
+
+        Item {
+            id: chatFrame
+            x: bubbleChat.cx - bubbleChat.wx
+            y: bubbleChat.cy - bubbleChat.wy
+            width: bubbleChat.cw
+            height: bubbleChat.ch
+            opacity: bubbleMouse.dragged ? 0.35 : 1
+            // Grows out of the bubble's side.
+            transformOrigin: bubbleChat.mode === "side" ? (bubbleChat.rightHalf ? Item.Right : Item.Left)
+                           : bubbleChat.mode === "above" ? (bubbleChat.rightHalf ? Item.BottomRight : Item.BottomLeft)
+                           : (bubbleChat.rightHalf ? Item.TopRight : Item.TopLeft)
+            ParallelAnimation {
+                id: growAnim
+                NumberAnimation { target: chatFrame; property: "scale"; from: 0.85; to: 1; duration: 160; easing.type: Easing.OutCubic }
+                NumberAnimation { target: chatFrame; property: "opacity"; from: 0; to: 1; duration: 120 }
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: Theme.windowRadius
+                color: Theme.surfaceContainer
+                border.width: 1
+                border.color: Theme.withAlpha(Theme.onSurface, 0.08)
+            }
+            Loader {
+                id: chatLoader
+                x: bubbleChat.pad
+                y: bubbleChat.pad
+                width: parent.width - 2 * bubbleChat.pad
+                active: bubbleChat.visible
+                focus: true
+                sourceComponent: root.popoutContent
+                Keys.onEscapePressed: root.bubbleChatOpen = false
+            }
+        }
+
+        // The bubble, docked: ✕ closes the chat; drag to move both.
+        Item {
+            id: dockBubble
+            x: bubbleChat.bx - bubbleChat.wx
+            y: bubbleChat.by - bubbleChat.wy
+            width: bubbleChat.s
+            height: bubbleChat.s
+
+            BubbleFace {
+                anchors.fill: parent
+                closeMode: true
+                hovered: dockMouse.containsMouse
+                opacity: bubbleMouse.dragged ? 0.25 : 1
+            }
+            MouseArea {
+                id: dockMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                cursorShape: bubbleMouse.dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                onPressed: mouse => bubbleMouse.beginDrag(mouse.x, mouse.y)
+                onPositionChanged: mouse => {
+                    if (pressed && mouse.buttons === Qt.LeftButton)
+                        bubbleMouse.moveDrag(mouse.x, mouse.y);
+                }
+                onCanceled: {
+                    if (bubbleMouse.dragged)
+                        bubbleMouse.finishDrag();
+                }
+                onReleased: mouse => {
+                    if (bubbleMouse.dragged)
+                        bubbleMouse.finishDrag();
+                    else if (mouse.button === Qt.RightButton)
+                        root.startCapture(true);
+                    else
+                        root.bubbleChatOpen = false;
+                }
+            }
         }
     }
 
@@ -1425,7 +1523,8 @@ PluginComponent {
                         }
                     }
                     IconBtn {
-                        icon: "keep"            // pin: stay open when you click elsewhere
+                        visible: root.onWindows
+                        icon: "keep"            // pin (Windows): stay open when you click elsewhere
                         filled: root.pinned
                         active: root.pinned
                         onClicked: root.togglePin()

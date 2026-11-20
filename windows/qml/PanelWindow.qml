@@ -38,7 +38,7 @@ Window {
 
     transientParent: null   // its own top-level window
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
-           | (mask ? Qt.WindowTransparentForInput : 0)
+           | (mask && !mask.item ? Qt.WindowTransparentForInput : 0)
     color: "transparent"
     width: fillWidth ? area.width - margins.left - margins.right : implicitWidth
     height: fillHeight ? area.height - margins.top - margins.bottom : implicitHeight

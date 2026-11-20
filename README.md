@@ -116,10 +116,10 @@ Works on Windows 10 (1809 or newer) and Windows 11.
 | **Open the chat** | Click the bar button | Click the tray icon (or set a shortcut in Settings) |
 | **Ask about a screen region** | `Mod+Shift+A`, right-click the bar button, or ⛶ in the chat | `Win+Shift+A`, or ⛶ in the chat |
 | **Ask about selected text** | `Mod+Shift+X`, or ❝ in the chat | `Win+Shift+X`, or ❝ in the chat |
-| **Floating bubble** | Click: chat · Right-click: screen region · Drag: move it, also to another monitor | same |
+| **Floating bubble** | Click: the chat opens with the bubble docked on its edge as ✕ (click ✕ or press Esc to close; drag ✕ to move both). It stays open while you work in other apps. · Right-click: screen region · Drag: move it, also to another monitor | Click: the chat opens in the bubble's place; click anywhere else to close it · Right-click and drag: same as Linux |
 | **Settings** | ⚙ in the chat, or DMS Settings → Plugins → Argos | ⚙ in the chat, or tray icon → Settings… |
 
-Click 📌 in the chat to **pin** it: it then stays open when you click elsewhere.
+On Windows, click 📌 in the chat to **pin** it: it then stays open when you click elsewhere.
 
 In the chat, **Enter** sends, **Shift+Enter** adds a new line, and the stop button cancels an
 answer. Selecting another region for a follow-up question just works; the old one doesn't come back.
