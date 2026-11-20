@@ -98,6 +98,9 @@ Item {
         popupArea = popupAnchor ? dux.workAreaAt(popupAnchor.x + popupAnchor.size / 2, popupAnchor.y + popupAnchor.size / 2)
                                 : dux.workArea();
         placePopup();
+        // Invisible until the new first frame is drawn: Windows would otherwise
+        // briefly show the window's last frame from the previous time (flicker).
+        popup.opacity = 0;
         if (popupAnchor) {
             frame.scale = 0.85;          // start state before it shows, so it never flashes at full size
             frame.opacity = 0;
@@ -147,6 +150,11 @@ Item {
         // Placed again a moment after its size changes (the window system may
         // otherwise keep the old position).
         onHeightChanged: if (visible) Qt.callLater(base.placePopup)
+        onFrameSwapped: {
+            if (visible && opacity === 0)
+                opacity = 1;
+        }
+        Component.onCompleted: dux.noTransitions(popup)
         onWidthChanged: if (visible) Qt.callLater(base.placePopup)
 
         // Like a flyout: clicking somewhere else closes it.

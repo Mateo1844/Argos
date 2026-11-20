@@ -208,6 +208,14 @@ class Bridge(QObject):
             except Exception:  # noqa: BLE001 - best effort only
                 pass
 
+    @Slot(QObject)
+    def noTransitions(self, window):
+        if IS_WINDOWS:
+            try:
+                winutil.disable_transitions(int(window.winId()))
+            except Exception:  # noqa: BLE001 - cosmetic
+                pass
+
     @Slot(str, str, bool)
     def notify(self, message, details, error):
         self.show_toast(message, details, error)

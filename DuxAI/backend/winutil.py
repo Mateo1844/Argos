@@ -160,6 +160,13 @@ def keep_on_top(hwnds):
             user32.SetWindowPos(HWND(hwnd), HWND_TOPMOST, 0, 0, 0, 0, flags)
 
 
+def disable_transitions(hwnd):
+    """No Windows fade/zoom animation when this window shows or hides
+    (Argos animates its own windows)."""
+    value = ctypes.c_int(1)
+    ctypes.WinDLL("dwmapi").DwmSetWindowAttribute(HWND(hwnd), 3, ctypes.byref(value), ctypes.sizeof(value))  # DWMWA_TRANSITIONS_FORCEDISABLED
+
+
 def set_foreground(hwnd):
     if hwnd and user32.IsWindow(hwnd):
         user32.SetForegroundWindow(hwnd)
