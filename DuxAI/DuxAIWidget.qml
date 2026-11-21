@@ -251,7 +251,6 @@ PluginComponent {
     component BubbleFace: Item {
         id: face
         property bool hovered: false
-        property bool closeMode: false     // docked on the open chat: shows ✕
         property bool backdrop: true
 
         Rectangle {
@@ -271,7 +270,6 @@ PluginComponent {
             logoScale: root.pillTransparent ? 0.75 : 0.62
             logoPath: root.logoPath
             hasLogo: root.hasLogo
-            visible: !face.closeMode
             Behavior on size {
                 NumberAnimation { duration: 100 }
             }
@@ -281,25 +279,6 @@ PluginComponent {
                 onStopped: faceCircle.opacity = 1
                 NumberAnimation { to: 0.5; duration: 600; easing.type: Easing.InOutQuad }
                 NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutQuad }
-            }
-        }
-        Rectangle {
-            visible: face.closeMode
-            anchors.centerIn: parent
-            anchors.verticalCenterOffset: -1
-            width: face.hovered ? 46 : 44
-            height: width
-            radius: width / 2
-            color: root.pillTransparent ? Theme.surfaceContainerHighest : root.accent
-            DIcon {
-                anchors.centerIn: parent
-                name: "close"
-                size: 24
-                color: "white"
-                rotation: face.closeMode ? 0 : -90
-                Behavior on rotation {
-                    NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
-                }
             }
         }
     }
@@ -755,6 +734,12 @@ PluginComponent {
             bubbleChatOpen = true;
     }
 
+    function closeBubbleChat() {
+        if (root.onWindows && typeof root.closeBubblePopup === "function")
+            root.closeBubblePopup();
+        else
+            bubbleChatOpen = false;
+    }
     function toggleBubbleChat() {
         if (root.onWindows && typeof root.showPopupNear === "function")
             root.showPopupNear(bubble.x, bubble.y, root.bubbleSize, false);  // toggles
@@ -1172,9 +1157,8 @@ PluginComponent {
     // moment later, so mouse positions are measured from the wrong place.
     PanelWindow {
         id: bubble
-        // DMS: stays next to its open chat and shows ✕. Windows: hidden while
-        // its chat is open (the chat takes the bubble's place).
-        visible: root.floatingBubble && !root.hidingForScreenshot && !(root.onWindows && root.bubbleChatShown)
+        // Hidden while its chat is open: the chat takes the bubble's place.
+        visible: root.floatingBubble && !root.hidingForScreenshot && !root.bubbleChatShown
         screen: root.bubbleScreen ?? null
         color: "transparent"
         anchors { bottom: true; right: true }
@@ -1189,7 +1173,6 @@ PluginComponent {
         BubbleFace {
             anchors.fill: parent
             hovered: bubbleMouse.containsMouse
-            closeMode: root.bubbleChatOpen && !root.onWindows
             opacity: bubbleMouse.dragged ? 0 : 1      // only the copy under the mouse shows while dragging
         }
 
@@ -1272,10 +1255,10 @@ PluginComponent {
 
     // The chat, opened from the floating bubble (DMS). Same content as the bar
     // popout, but on the overlay layer, so it shows above fullscreen video.
-    // Docked right next to the bubble (which shows ✕ meanwhile): above it,
-    // below it, or beside it, flush with the bubble's outer side so the two
-    // fit tight in a screen corner. It stays open when you click elsewhere and
-    // lets other apps have the keyboard; ✕ or Esc closes it.
+    // It takes the bubble's place (the bubble hides): its corner goes where the
+    // bubble was, so the bubble seems to grow into it. It stays open when you
+    // click elsewhere and lets other apps have the keyboard; the ✕ in its
+    // header or Esc closes it.
     PanelWindow {
         id: bubbleChat
         visible: root.bubbleChatOpen && !root.onWindows
@@ -1306,7 +1289,6 @@ PluginComponent {
         readonly property real pad: PopoutMetrics.contentPadding
         readonly property var area: root.screenRect(root.bubbleScreen)
         readonly property real s: root.bubbleSize
-        readonly property real gap: 6
         readonly property real cw: root.popoutWidth
         readonly property real ch: Math.min((chatLoader.item ? chatLoader.item.implicitHeight : root.popoutHeight) + 2 * pad, area.h - 16)
         // The bubble, measured from this screen's top-left corner.
@@ -1314,19 +1296,12 @@ PluginComponent {
         readonly property real by: area.h - bubble.margins.bottom - s
         readonly property bool rightHalf: bx + s / 2 > area.w / 2
         readonly property bool lowerHalf: by + s / 2 > area.h / 2
-        readonly property bool fitsAbove: by - gap - ch >= 0
-        readonly property bool fitsBelow: by + s + gap + ch <= area.h
-        readonly property string mode: lowerHalf ? (fitsAbove ? "above" : fitsBelow ? "below" : "side")
-                                                 : (fitsBelow ? "below" : fitsAbove ? "above" : "side")
         function clamp(v, lo, hi) {
             return Math.min(Math.max(v, lo), Math.max(lo, hi));
         }
         margins {
-            left: bubbleChat.mode === "side" ? (bubbleChat.rightHalf ? bubbleChat.bx - bubbleChat.gap - bubbleChat.cw : bubbleChat.bx + bubbleChat.s + bubbleChat.gap)
-                : bubbleChat.clamp(bubbleChat.rightHalf ? bubbleChat.bx + bubbleChat.s - bubbleChat.cw : bubbleChat.bx, 0, bubbleChat.area.w - bubbleChat.cw)
-            top: bubbleChat.mode === "above" ? bubbleChat.by - bubbleChat.gap - bubbleChat.ch
-               : bubbleChat.mode === "below" ? bubbleChat.by + bubbleChat.s + bubbleChat.gap
-               : bubbleChat.clamp(bubbleChat.lowerHalf ? bubbleChat.by + bubbleChat.s - bubbleChat.ch : bubbleChat.by, 0, bubbleChat.area.h - bubbleChat.ch)
+            left: clamp(rightHalf ? bx + s - cw : bx, 0, area.w - cw)
+            top: clamp(lowerHalf ? by + s - ch : by, 0, area.h - ch)
         }
         implicitWidth: cw
         implicitHeight: ch
@@ -1334,11 +1309,9 @@ PluginComponent {
         Item {
             id: chatFrame
             anchors.fill: parent
-            // Grows out of the bubble's side.
-            transformOrigin: bubbleChat.mode === "side" ? (bubbleChat.rightHalf ? (bubbleChat.lowerHalf ? Item.BottomRight : Item.TopRight)
-                                                                                : (bubbleChat.lowerHalf ? Item.BottomLeft : Item.TopLeft))
-                           : bubbleChat.mode === "above" ? (bubbleChat.rightHalf ? Item.BottomRight : Item.BottomLeft)
-                           : (bubbleChat.rightHalf ? Item.TopRight : Item.TopLeft)
+            // Grows out of the bubble's corner.
+            transformOrigin: bubbleChat.lowerHalf ? (bubbleChat.rightHalf ? Item.BottomRight : Item.BottomLeft)
+                                                  : (bubbleChat.rightHalf ? Item.TopRight : Item.TopLeft)
             ParallelAnimation {
                 id: growAnim
                 NumberAnimation { target: chatFrame; property: "scale"; from: 0.85; to: 1; duration: 160; easing.type: Easing.OutCubic }
@@ -1360,7 +1333,7 @@ PluginComponent {
                 active: bubbleChat.visible
                 focus: true
                 sourceComponent: root.popoutContent
-                Keys.onEscapePressed: root.bubbleChatOpen = false
+                Keys.onEscapePressed: root.closeBubbleChat()
             }
         }
     }
@@ -1602,6 +1575,30 @@ PluginComponent {
                         icon: "settings"
                         active: root.quickSettingsOpen
                         onClicked: root.quickSettingsOpen = !root.quickSettingsOpen
+                    }
+                    // Close the bubble's chat (the bubble comes back). In the bubble's colour,
+                    // so it stands out from the other buttons.
+                    Rectangle {
+                        visible: root.bubbleChatShown
+                        Layout.leftMargin: 2
+                        implicitWidth: 28
+                        implicitHeight: 28
+                        radius: width / 2
+                        color: root.pillTransparent ? Theme.surfaceContainerHighest : root.accent
+                        opacity: closeMouse.containsMouse ? 1 : 0.85
+                        DIcon {
+                            anchors.centerIn: parent
+                            name: "close"
+                            size: 18
+                            color: root.pillTransparent ? Theme.onSurface : "white"
+                        }
+                        MouseArea {
+                            id: closeMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.closeBubbleChat()
+                        }
                     }
                 }
 
