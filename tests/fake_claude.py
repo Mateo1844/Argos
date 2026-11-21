@@ -58,12 +58,17 @@ out({"type": "stream_event", "event": {"type": "content_block_start", "content_b
 has_image = any(b.get("type") == "image" for b in msg["message"]["content"])
 answer = ["Hello", " there", "!" if not has_image else " I see an image."]
 if os.environ.get("FAKE_CLAUDE_ANSWER"):          # tests: a custom answer (e.g. with math)
-    answer = [os.environ["FAKE_CLAUDE_ANSWER"]]
+    full = os.environ["FAKE_CLAUDE_ANSWER"]
+    step = int(os.environ.get("FAKE_CLAUDE_CHUNK", "0") or 0)       # stream it in small pieces
+    answer = [full[i:i + step] for i in range(0, len(full), step)] if step else [full]
 for part in answer:
     out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": part}}})
     if os.environ.get("FAKE_CLAUDE_SLOW"):
         import time
         time.sleep(2)
+    elif os.environ.get("FAKE_CLAUDE_CHUNK_DELAY"):
+        import time
+        time.sleep(float(os.environ["FAKE_CLAUDE_CHUNK_DELAY"]))
 out({"type": "assistant", "message": {"content": [{"type": "text", "text": "".join(answer)}]}})
 # Like Claude Code 2.1.28x: subscription usage with every answer (utilization 0-1, resetsAt in seconds).
 import time as _t

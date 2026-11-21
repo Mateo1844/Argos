@@ -508,7 +508,10 @@ PluginComponent {
         id: bodyMetrics
         font.pixelSize: root.fsBody
     }
+    // Formulas are drawn at the screen's scaling (1.25 at 125%...) so they're as sharp as text.
+    readonly property real screenScale: Math.max(1, ...Array.from(Qt.application.screens).map(s => s.devicePixelRatio))
     readonly property string mathStyle: String(Theme.onSurface).slice(0, 7) + "," + root.fsBody + "," + bodyMetrics.xHeight.toFixed(2)
+                                        + "," + screenScale
 
     // Markdown -> HTML, so formula images can be put in (Qt's Markdown can't hold them).
     TextEdit {
@@ -538,6 +541,11 @@ PluginComponent {
         } catch (e) {}
         if (!pieces)
             return markdownToHtml(text);
+        // While an answer streams in, the drawn formulas cover only the text so
+        // far: show the rest of the text behind them as it arrives.
+        const covered = pieces.map(p => p.t !== undefined ? p.t : p.raw).join("");
+        if (!text.startsWith(covered))
+            return markdownToHtml(text);
         let md = "";
         pieces.forEach((p, i) => {
             if (p.t !== undefined)
@@ -545,6 +553,7 @@ PluginComponent {
             else
                 md += p.display ? "\n\nARGOSMATH" + i + "Z\n\n" : "ARGOSMATH" + i + "Z";
         });
+        md += text.slice(covered.length);
         let html = markdownToHtml(md);
         const img = p => "<a href=\"latex:" + encodeURIComponent(p.m) + "\"><img src=\"" + p.src + "\" width=\"" + p.w
                          + "\" height=\"" + p.h + "\" style=\"vertical-align: middle\"></a>";
@@ -904,6 +913,10 @@ PluginComponent {
             break;
         case "limits":
             limits = ev.limits || {};
+            break;
+        case "math":            // formulas drawn while the answer streams in
+            if (messages.count > 0)
+                messages.setProperty(messages.count - 1, "math", JSON.stringify(ev.math));
             break;
         case "permission_cancel":
             if (permission && permission.id === ev.id)

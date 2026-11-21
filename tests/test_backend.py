@@ -105,7 +105,7 @@ class BackendTest(unittest.TestCase):
     def test_math_is_found_but_not_money_or_code(self):
         mod = self._module()
         pieces = mod.split_math("Mass $m$, $$\\sum n$$, costs $5 and $10, `$code$`, \\(a^2\\).")
-        maths = [p[1:] for p in pieces if p[0] == "math"]
+        maths = [p[1:3] for p in pieces if p[0] == "math"]
         self.assertEqual(maths, [("m", False), ("\\sum n", True), ("a^2", False)])
 
     def test_math_is_drawn_for_the_chat(self):

@@ -21,6 +21,7 @@ to shrink big screenshots).
 import argparse
 import base64
 import hashlib
+import math
 import json
 import os
 import re
@@ -112,7 +113,6 @@ def now():
 # ziamath, STIX math font) in the chat's text colour and size, and shown in
 # place of the code. The answer itself keeps the LaTeX (copy button, history).
 
-MATH_SCALE = 3      # images are 3x their shown size: sharp at any display scaling
 
 _FENCE = re.compile(r"```.*?(?:```|$)|`[^`\n]*`", re.S)
 _MATH = re.compile(
@@ -134,7 +134,7 @@ def split_math(text):
         if m.start() > pos:
             pieces.append(("text", text[pos:m.start()]))
         latex = next(g for g in m.groups() if g is not None).strip()
-        pieces.append(("math", latex, bool(m.group("d1") or m.group("d2"))))
+        pieces.append(("math", latex, bool(m.group("d1") or m.group("d2")), text[m.start():m.end()]))
         pos = m.end()
     if pos < len(text):
         pieces.append(("text", text[pos:]))
@@ -142,9 +142,11 @@ def split_math(text):
 
 
 def render_math(text, style):
-    """The answer as pieces for the chat: {"t": text} or {"m": latex, "display",
-    "src", "w", "h"} (an SVG file, shown at w x h). None if there's no math or
-    it can't be drawn (then the chat shows the text as it is)."""
+    """The answer as pieces for the chat: {"t": text} or {"m": latex, "raw",
+    "display", "src", "w", "h"} (an SVG file, shown at w x h; "raw" is the
+    formula as written, so the chat knows how much of the text is covered).
+    None if there's no math or it can't be drawn (then the text shows as is).
+    style = "COLOR,FONT_PX,X_HEIGHT_PX,SCREEN_SCALE"."""
     if not style or "$" not in text and "\\(" not in text and "\\[" not in text:
         return None
     pieces = split_math(text)
@@ -156,8 +158,9 @@ def render_math(text, style):
         return None
     ziamath.config.svg2 = False        # plain SVG 1.1: Qt can't draw <symbol>/<use>
     try:
-        color, size, xheight = style.split(",")
+        color, size, xheight, *rest = style.split(",")
         size, xheight = float(size), float(xheight)
+        scale = min(max(float(rest[0]) if rest else 2.0, 1.0), 4.0)
     except ValueError:
         return None
     folder = DATA_DIR / "math"
@@ -167,23 +170,32 @@ def render_math(text, style):
         if piece[0] == "text":
             out.append({"t": piece[1]})
             continue
-        latex, display = piece[1], piece[2]
-        key = hashlib.sha1(f"{latex}|{display}|{style}|{MATH_SCALE}".encode()).hexdigest()[:16]
+        latex, display, raw = piece[1], piece[2], piece[3]
+        key = hashlib.sha1(f"{latex}|{display}|{style}|v3".encode()).hexdigest()[:16]
         path, meta = folder / f"{key}.svg", folder / f"{key}.json"
         try:
             if path.exists() and meta.exists():
                 w, h = json.loads(meta.read_text())
             else:
-                svg, w, h = _draw_math(ziamath, latex, display, color, size, xheight)
+                svg, w, h = _draw_math(ziamath, latex, display, color, size, xheight, scale)
                 path.write_text(svg, encoding="utf-8")
                 meta.write_text(json.dumps([w, h]))
-            out.append({"m": latex, "display": display, "src": path.as_uri(), "w": round(w, 1), "h": round(h, 1)})
+            out.append({"m": latex, "raw": raw, "display": display, "src": path.as_uri(),
+                        "w": round(w, 2), "h": round(h, 2)})
         except Exception:  # noqa: BLE001 - a formula ziamath can't draw stays as code
-            out.append({"t": f"$${latex}$$" if display else f"${latex}$"})
+            out.append({"t": raw})
     return out
 
 
-def _draw_math(ziamath, latex, display, color, size, xheight):
+def count_math(text):
+    """How many complete formulas the text has (cheap; for streaming)."""
+    if "$" not in text and "\\(" not in text and "\\[" not in text:
+        return 0
+    return sum(1 for p in split_math(text) if p[0] == "math")
+
+
+def _draw_math(ziamath, latex, display, color, size, xheight, scale):
+    """SVG of one formula, its shown width and height (px)."""
     m = ziamath.Latex(latex, size=size * 1.08, color=color, inline=not display)
     svg = m.svg()
     w, h = m.getsize()
@@ -192,13 +204,23 @@ def _draw_math(ziamath, latex, display, color, size, xheight):
     # pad it so the formula's own baseline lands on the text's baseline.
     diff = xheight - (h - descent) + descent
     top, bottom = (diff, 0.0) if diff > 0 else (0.0, -diff)
+    # Whole screen pixels, so the image is never stretched by a fraction of one.
+    shown_w = math.ceil(w * scale) / scale
+    shown_h = math.ceil((h + top + bottom) * scale) / scale
+    bottom = shown_h - h - top
     vb = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"', svg)
     x0, y0, vw, vh = map(float, vb.groups())
-    svg = svg.replace(vb.group(0), f'viewBox="{x0} {y0 - top:.3f} {vw} {vh + top + bottom:.3f}"', 1)
-    shown_h = h + top + bottom
+    svg = svg.replace(vb.group(0), f'viewBox="{x0:.3f} {y0 - top:.3f} {vw + shown_w - w:.3f} {vh + top + bottom:.3f}"', 1)
+    # Drawn at exactly the screen's scale (e.g. 1.5x at 150%): one image pixel
+    # per screen pixel, so it's as sharp as the text around it.
     svg = re.sub(r'width="[\d.]+" height="[\d.]+"',
-                 f'width="{w * MATH_SCALE:.2f}" height="{shown_h * MATH_SCALE:.2f}"', svg, count=1)
-    return svg, w, shown_h
+                 f'width="{round(shown_w * scale)}" height="{round(shown_h * scale)}"', svg, count=1)
+    # A hair of outline: the math font is thin, and next to (hinted) UI text it
+    # looks grey and soft without it.
+    svg = re.sub(r"(<svg [^>]*>)", lambda m_: m_.group(1) + f'<g stroke="{color}" stroke-width="{size * 0.017:.3f}" '
+                 'stroke-linejoin="round">', svg, count=1)
+    svg = svg[:svg.rindex("</svg>")] + "</g></svg>"
+    return svg, shown_w, shown_h
 
 
 # --------------------------------------------------------- usage limits --
@@ -706,6 +728,7 @@ def cmd_ask(args):
                     "parent_tool_use_id": None, "session_id": session_id or ""})
 
     text, result, thinking_sent, steps = "", None, False, []
+    math_count = 0                     # formulas drawn so far while streaming
     try:
         for line in proc.stdout:
             try:
@@ -722,6 +745,11 @@ def cmd_ask(args):
                     if delta.get("type") == "text_delta":
                         text += delta.get("text", "")
                         emit(type="text", text=delta.get("text", ""))
+                        if args.math and count_math(text) != math_count:     # a formula just completed
+                            math_count = count_math(text)
+                            pieces = render_math(text, args.math)
+                            if pieces:
+                                emit(type="math", math=pieces)
                     elif delta.get("type") == "thinking_delta" and not thinking_sent:
                         thinking_sent = True
                         emit(type="status", text="Thinking…")
