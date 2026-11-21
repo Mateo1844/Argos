@@ -508,10 +508,19 @@ PluginComponent {
         id: bodyMetrics
         font.pixelSize: root.fsBody
     }
-    // Formulas are drawn at the screen's scaling (1.25 at 125%...) so they're as sharp as text.
-    readonly property real screenScale: Math.max(1, ...Array.from(Qt.application.screens).map(s => s.devicePixelRatio))
+    // Formulas are drawn for the scaling of the screen the chat is on (1.25 at
+    // 125%) so they're shown pixel for pixel, as sharp as the text.
+    property real chatScale: 1
     readonly property string mathStyle: String(Theme.onSurface).slice(0, 7) + "," + root.fsBody + "," + bodyMetrics.xHeight.toFixed(2)
-                                        + "," + screenScale
+                                        + "," + chatScale
+    // Chat moved to a screen with other scaling: draw its formulas again for it.
+    onChatScaleChanged: {
+        let hasMath = false;
+        for (let i = 0; i < messages.count; i++)
+            hasMath = hasMath || messages.get(i).math !== "";
+        if (hasMath && chatId && !busy)
+            openChat(chatId);
+    }
 
     // Markdown -> HTML, so formula images can be put in (Qt's Markdown can't hold them).
     TextEdit {
@@ -1401,6 +1410,10 @@ PluginComponent {
             implicitHeight: root.popoutHeight - 40
             width: parent ? parent.width : root.popoutWidth
 
+            // The scaling of the screen this chat is on (for drawing formulas).
+            readonly property real screenScale: Screen.devicePixelRatio
+            onScreenScaleChanged: root.chatScale = Math.max(1, screenScale)
+
             // How far the chat list reaches under the input box. Only when nothing sits
             // between them (no approval card / attachment), since those are see-through.
             readonly property real listOverlap: (inputBox.visible && root.permission === null
@@ -1422,7 +1435,10 @@ PluginComponent {
                         focusTimer.restart();
                 }
             }
-            Component.onCompleted: focusTimer.restart()
+            Component.onCompleted: {
+                root.chatScale = Math.max(1, screenScale);
+                focusTimer.restart();
+            }
 
             // Thin outline along the edge of the popout (Settings: "Window border").
             Rectangle {

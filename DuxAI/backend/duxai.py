@@ -33,6 +33,7 @@ import tempfile
 import threading
 import time
 import uuid
+from fractions import Fraction
 from pathlib import Path
 
 # ---------------------------------------------------------------- paths ----
@@ -141,47 +142,50 @@ def split_math(text):
     return pieces
 
 
+MATH_VERSION = 4    # bump when formulas are drawn differently: old drawings are then deleted
+
+
+def _maybe_math(text):
+    return "$" in text or "\\(" in text or "\\[" in text
+
+
 def render_math(text, style):
-    """The answer as pieces for the chat: {"t": text} or {"m": latex, "raw",
-    "display", "src", "w", "h"} (an SVG file, shown at w x h; "raw" is the
-    formula as written, so the chat knows how much of the text is covered).
-    None if there's no math or it can't be drawn (then the text shows as is).
-    style = "COLOR,FONT_PX,X_HEIGHT_PX,SCREEN_SCALE"."""
-    if not style or "$" not in text and "\\(" not in text and "\\[" not in text:
+    """The answer as pieces for the chat: {"t": text} or a formula {"m": latex,
+    "raw": formula as written, "display": bool, "src": SVG file, "w", "h": size
+    in screen-independent px}. None if there's no math or it can't be drawn
+    (the text then shows as is). style = "COLOR,FONT_PX,X_HEIGHT_PX,SCALE",
+    where SCALE is the scaling of the screen the chat is on (1.25 at 125%)."""
+    if not style or not _maybe_math(text):
         return None
     pieces = split_math(text)
     if not any(p[0] == "math" for p in pieces):
         return None
     try:
         import ziamath
-    except ImportError:
+        color, size, xheight, scale = style.split(",")
+        size, xheight, scale = float(size), float(xheight), min(max(float(scale), 1.0), 4.0)
+    except (ImportError, ValueError):
         return None
     ziamath.config.svg2 = False        # plain SVG 1.1: Qt can't draw <symbol>/<use>
-    try:
-        color, size, xheight, *rest = style.split(",")
-        size, xheight = float(size), float(xheight)
-        scale = min(max(float(rest[0]) if rest else 2.0, 1.0), 4.0)
-    except ValueError:
-        return None
-    folder = DATA_DIR / "math"
-    folder.mkdir(parents=True, exist_ok=True)
+    folder = DATA_DIR / f"math-v{MATH_VERSION}"     # drawings are reused (history, streaming)
+    if not folder.exists():
+        for old in [DATA_DIR / "math", *DATA_DIR.glob("math-v*")]:     # drawn by an older version
+            shutil.rmtree(old, ignore_errors=True)
+        folder.mkdir(parents=True, exist_ok=True)
     out = []
     for piece in pieces:
         if piece[0] == "text":
             out.append({"t": piece[1]})
             continue
-        latex, display, raw = piece[1], piece[2], piece[3]
-        key = hashlib.sha1(f"{latex}|{display}|{style}|v3".encode()).hexdigest()[:16]
-        path, meta = folder / f"{key}.svg", folder / f"{key}.json"
+        _, latex, display, raw = piece
+        path = folder / (hashlib.sha1(f"{latex}|{display}|{style}".encode()).hexdigest()[:16] + ".svg")
         try:
-            if path.exists() and meta.exists():
-                w, h = json.loads(meta.read_text())
-            else:
-                svg, w, h = _draw_math(ziamath, latex, display, color, size, xheight, scale)
-                path.write_text(svg, encoding="utf-8")
-                meta.write_text(json.dumps([w, h]))
+            if not path.exists():
+                path.write_text(_draw_math(ziamath, latex, display, color, size, xheight, scale), encoding="utf-8")
+            # The file's size is in screen pixels; the chat wants it unscaled.
+            pw, ph = re.search(r'width="(\d+)" height="(\d+)"', path.read_text(encoding="utf-8")).groups()
             out.append({"m": latex, "raw": raw, "display": display, "src": path.as_uri(),
-                        "w": round(w, 2), "h": round(h, 2)})
+                        "w": round(int(pw) / scale), "h": round(int(ph) / scale)})
         except Exception:  # noqa: BLE001 - a formula ziamath can't draw stays as code
             out.append({"t": raw})
     return out
@@ -189,13 +193,15 @@ def render_math(text, style):
 
 def count_math(text):
     """How many complete formulas the text has (cheap; for streaming)."""
-    if "$" not in text and "\\(" not in text and "\\[" not in text:
-        return 0
-    return sum(1 for p in split_math(text) if p[0] == "math")
+    return sum(1 for p in split_math(text) if p[0] == "math") if _maybe_math(text) else 0
 
 
 def _draw_math(ziamath, latex, display, color, size, xheight, scale):
-    """SVG of one formula, its shown width and height (px)."""
+    """SVG of one formula, sized so the chat can show it pixel for pixel.
+
+    Qt rounds an image in rich text to whole px, so the size must be whole px
+    *and* whole screen pixels (at 125%: a multiple of 4 px = 5 screen pixels).
+    Anything else gets stretched by a fraction of a pixel, which blurs it."""
     m = ziamath.Latex(latex, size=size * 1.08, color=color, inline=not display)
     svg = m.svg()
     w, h = m.getsize()
@@ -204,23 +210,20 @@ def _draw_math(ziamath, latex, display, color, size, xheight, scale):
     # pad it so the formula's own baseline lands on the text's baseline.
     diff = xheight - (h - descent) + descent
     top, bottom = (diff, 0.0) if diff > 0 else (0.0, -diff)
-    # Whole screen pixels, so the image is never stretched by a fraction of one.
-    shown_w = math.ceil(w * scale) / scale
-    shown_h = math.ceil((h + top + bottom) * scale) / scale
-    bottom = shown_h - h - top
     vb = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"', svg)
-    x0, y0, vw, vh = map(float, vb.groups())
-    svg = svg.replace(vb.group(0), f'viewBox="{x0:.3f} {y0 - top:.3f} {vw + shown_w - w:.3f} {vh + top + bottom:.3f}"', 1)
-    # Drawn at exactly the screen's scale (e.g. 1.5x at 150%): one image pixel
-    # per screen pixel, so it's as sharp as the text around it.
-    svg = re.sub(r'width="[\d.]+" height="[\d.]+"',
-                 f'width="{round(shown_w * scale)}" height="{round(shown_h * scale)}"', svg, count=1)
+    x0, y0, vw, vh = map(float, vb.groups())     # ziamath adds a 1 px margin all round
+    # Round the size up, padding evenly on both sides (keeps it lined up).
+    step = Fraction(scale).limit_denominator(8).denominator
+    step = step if step <= 5 else 1            # odd scalings (1.1...): whole px is the best we can do
+    W, H = (math.ceil(v / step - 1e-6) * step for v in (vw, vh + top + bottom))
+    left, top = (W - vw) / 2, top + (H - vh - top - bottom) / 2
+    svg = svg.replace(vb.group(0), f'viewBox="{x0 - left:.3f} {y0 - top:.3f} {W} {H}"', 1)
+    svg = re.sub(r'width="[\d.]+" height="[\d.]+"', f'width="{round(W * scale)}" height="{round(H * scale)}"', svg, count=1)
     # A hair of outline: the math font is thin, and next to (hinted) UI text it
     # looks grey and soft without it.
-    svg = re.sub(r"(<svg [^>]*>)", lambda m_: m_.group(1) + f'<g stroke="{color}" stroke-width="{size * 0.017:.3f}" '
+    svg = re.sub(r"(<svg [^>]*>)", lambda g: g.group(1) + f'<g stroke="{color}" stroke-width="{size * 0.017:.3f}" '
                  'stroke-linejoin="round">', svg, count=1)
-    svg = svg[:svg.rindex("</svg>")] + "</g></svg>"
-    return svg, shown_w, shown_h
+    return svg[:svg.rindex("</svg>")] + "</g></svg>"
 
 
 # --------------------------------------------------------- usage limits --
@@ -1149,7 +1152,7 @@ def main(argv=None):
     ask.add_argument("--web", action="store_true", help="allow web search tools")
     ask.add_argument("--max-image-side", type=int, default=1280)
     ask.add_argument("--extra", default="", help="extra system prompt instructions")
-    ask.add_argument("--math", default="", help="draw formulas: COLOR,FONT_PX,X_HEIGHT_PX")
+    ask.add_argument("--math", default="", help="draw formulas: COLOR,FONT_PX,X_HEIGHT_PX,SCALE")
     ask.add_argument("prompt", nargs="?", default="")
     ask.set_defaults(func=cmd_ask)
 
@@ -1157,7 +1160,7 @@ def main(argv=None):
     sub.add_parser("limits", help="last known 5-hour / weekly usage").set_defaults(func=cmd_limits)
     load = sub.add_parser("load")
     load.add_argument("id")
-    load.add_argument("--math", default="", help="draw formulas: COLOR,FONT_PX,X_HEIGHT_PX")
+    load.add_argument("--math", default="", help="draw formulas: COLOR,FONT_PX,X_HEIGHT_PX,SCALE")
     load.set_defaults(func=cmd_load)
     title = sub.add_parser("title", help="generate a short title for a chat")
     title.add_argument("id")

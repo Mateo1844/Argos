@@ -114,24 +114,27 @@ class BackendTest(unittest.TestCase):
             import ziamath  # noqa: F401
         except ImportError:
             self.skipTest("ziamath not installed")
-        pieces = mod.render_math("So $E=mc^2$.", "#ffffff,15,8")
+        pieces = mod.render_math("So $E=mc^2$.", "#ffffff,15,8,1.25")
         self.assertEqual(pieces[0], {"t": "So "})
-        self.assertEqual(pieces[1]["m"], "E=mc^2")
-        self.assertTrue(pieces[1]["src"].endswith(".svg"))
-        self.assertIsNone(mod.render_math("No math, just $5.", "#ffffff,15,8"))
+        formula = pieces[1]
+        self.assertEqual(formula["m"], "E=mc^2")
+        self.assertTrue(formula["src"].endswith(".svg"))
+        # Whole px and whole screen pixels at 125% (Qt rounds images to whole px).
+        for side in (formula["w"], formula["h"]):
+            self.assertEqual(side % 4, 0)
+        self.assertEqual(mod.render_math("So $E=mc^2$.", "#ffffff,15,8,1.25"), pieces)   # cached
+        self.assertIsNone(mod.render_math("No math, just $5.", "#ffffff,15,8,1.25"))
 
     def _module(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("duxai_m", BACKEND)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+        mod.DATA_DIR = self.data          # never the real chat folder
         return mod
 
     def test_limits_parsing(self):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("duxai", BACKEND)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = self._module()
         # older format: one window, utilization only near the limit, resetsAt in ms
         self.assertEqual(mod.parse_limits({"rateLimitType": "five_hour", "utilization": 0.85, "resetsAt": 1790000000000}),
                          {"five_hour": {"pct": 85.0, "resets_at": 1790000000}})
