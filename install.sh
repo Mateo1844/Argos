@@ -23,6 +23,14 @@ fi
 python3 -c "import PIL" 2>/dev/null && ok "Pillow found (big screenshots get shrunk)" \
     || warn "optional: sudo dnf install python3-pillow  (shrinks big screenshots = fewer tokens)"
 
+if python3 -c "import ziamath" 2>/dev/null; then
+    ok "ziamath found (math formulas are drawn)"
+elif python3 -m pip install --user --quiet ziamath 2>/dev/null; then
+    ok "installed ziamath (draws math formulas)"
+else
+    warn "optional: python3 -m pip install --user ziamath  (draws math formulas instead of showing LaTeX code)"
+fi
+
 mkdir -p "$PLUGIN_DIR"
 if [ -L "$TARGET" ] || [ ! -e "$TARGET" ]; then
     ln -sfn "$REPO_DIR/DuxAI" "$TARGET"

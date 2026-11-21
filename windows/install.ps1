@@ -27,7 +27,8 @@ if (-not $python) {
 }
 Ok "Python: $python"
 
-# 2. Python packages (PySide6 = the window toolkit, Pillow = screenshots), in
+# 2. Python packages (PySide6 = the window toolkit, Pillow = screenshots,
+#    ziamath = draws math formulas), in
 #    their own short folder: C:\Users\<you>\.duxai-venv. Python from the
 #    Microsoft Store otherwise puts packages in a folder so deep that PySide6
 #    hits Windows' 260-character path limit. No admin rights needed.
@@ -39,7 +40,7 @@ if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
 }
 $python = Join-Path $venv "Scripts\python.exe"
 $pythonw = Join-Path $venv "Scripts\pythonw.exe"
-Write-Host "  Installing PySide6 + Pillow (about 100 MB, takes a minute)..."
+Write-Host "  Installing PySide6 + Pillow + ziamath (about 100 MB, takes a minute)..."
 & $python -m pip install --upgrade --quiet -r (Join-Path $here "requirements.txt")
 if ($LASTEXITCODE -ne 0) {
     Warn "Installing the Python packages failed (see the error above)."

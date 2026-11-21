@@ -39,6 +39,7 @@ You don't need an API key.
 | 🫧 **Floating bubble** | A draggable button that stays on top of everything, even fullscreen video, on any monitor. Handy during lectures. |
 | 🛠️ **Agent mode** | Claude can read files and run commands for you, and asks before it changes anything. |
 | 🗂️ **History** | Continue or delete old chats, and see how much disk space they use. |
+| ∑ **Math** | Formulas (LaTeX) are drawn like real LaTeX, inline and as centred blocks. Click a formula to copy its LaTeX. |
 | 🪙 **Light on tokens** | A short system prompt, no tools unless needed, and shrunk screenshots. A token counter shows usage. |
 | 📊 **Session limit** | The % next to the token counter (e.g. `128 tok · 24%`) is how much of your 5-hour session limit you've used. It turns orange from 80% and red from 95%. |
 
@@ -59,8 +60,10 @@ claude                     # type /login, choose your Claude subscription, then 
 git clone https://github.com/Mateo1844/Argos.git ~/Argos
 cd ~/Argos && ./install.sh
 
-# 3. Needed for selected text; Pillow (optional) shrinks big screenshots
+# 3. Needed for selected text; Pillow (optional) shrinks big screenshots,
+#    ziamath draws math formulas (install.sh tries to install it for you)
 sudo dnf install wl-clipboard python3-pillow
+python3 -m pip install --user ziamath
 ```
 
 Then:

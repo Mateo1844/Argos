@@ -57,6 +57,8 @@ out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {
 out({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "text"}}})
 has_image = any(b.get("type") == "image" for b in msg["message"]["content"])
 answer = ["Hello", " there", "!" if not has_image else " I see an image."]
+if os.environ.get("FAKE_CLAUDE_ANSWER"):          # tests: a custom answer (e.g. with math)
+    answer = [os.environ["FAKE_CLAUDE_ANSWER"]]
 for part in answer:
     out({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": part}}})
     if os.environ.get("FAKE_CLAUDE_SLOW"):

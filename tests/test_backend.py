@@ -102,6 +102,31 @@ class BackendTest(unittest.TestCase):
         saved = self.run_backend("limits")[-1]["limits"]
         self.assertEqual(saved["five_hour"]["pct"], 23.5)
 
+    def test_math_is_found_but_not_money_or_code(self):
+        mod = self._module()
+        pieces = mod.split_math("Mass $m$, $$\\sum n$$, costs $5 and $10, `$code$`, \\(a^2\\).")
+        maths = [p[1:] for p in pieces if p[0] == "math"]
+        self.assertEqual(maths, [("m", False), ("\\sum n", True), ("a^2", False)])
+
+    def test_math_is_drawn_for_the_chat(self):
+        mod = self._module()
+        try:
+            import ziamath  # noqa: F401
+        except ImportError:
+            self.skipTest("ziamath not installed")
+        pieces = mod.render_math("So $E=mc^2$.", "#ffffff,15,8")
+        self.assertEqual(pieces[0], {"t": "So "})
+        self.assertEqual(pieces[1]["m"], "E=mc^2")
+        self.assertTrue(pieces[1]["src"].endswith(".svg"))
+        self.assertIsNone(mod.render_math("No math, just $5.", "#ffffff,15,8"))
+
+    def _module(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("duxai_m", BACKEND)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
     def test_limits_parsing(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("duxai", BACKEND)

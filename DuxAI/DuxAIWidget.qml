@@ -498,7 +498,61 @@ PluginComponent {
     signal scrollToEnd
 
     ListModel {
-        id: messages   // { role, text, image, quote, window, steps, isError }
+        id: messages   // { role, text, image, quote, window, steps, isError, math }
+    }
+
+    // ---- math: formulas drawn as images by the backend (see render_math) ----
+    // How formulas should look: text colour, size and the font's x-height (to
+    // line them up with the text).
+    FontMetrics {
+        id: bodyMetrics
+        font.pixelSize: root.fsBody
+    }
+    readonly property string mathStyle: String(Theme.onSurface).slice(0, 7) + "," + root.fsBody + "," + bodyMetrics.xHeight.toFixed(2)
+
+    // Markdown -> HTML, so formula images can be put in (Qt's Markdown can't hold them).
+    TextEdit {
+        id: mdConverter
+        visible: false
+        textFormat: TextEdit.MarkdownText
+        font.pixelSize: root.fsBody
+    }
+
+    function markdownToHtml(md) {
+        // Load it as Markdown, then switch to rich text: Qt then hands back HTML.
+        mdConverter.textFormat = TextEdit.MarkdownText;
+        mdConverter.text = md;
+        mdConverter.textFormat = TextEdit.RichText;
+        return mdConverter.text.replace(/<body[^>]*>/, "<body>")    // keep the chat's own font and size
+                          .replace(/color:#0000ff/g, "color:" + String(root.accent).slice(0, 7));   // links: accent, not default blue
+    }
+
+    // An answer as rich text (always: switching a text box between Markdown
+    // and rich text loses the text). With formulas: the Markdown around them as
+    // usual, each formula an image (inline on the text line, display ones
+    // centred). Clicking a formula copies its LaTeX.
+    function answerHtml(text, json) {
+        let pieces = null;
+        try {
+            pieces = json ? JSON.parse(json) : null;
+        } catch (e) {}
+        if (!pieces)
+            return markdownToHtml(text);
+        let md = "";
+        pieces.forEach((p, i) => {
+            if (p.t !== undefined)
+                md += p.t;
+            else
+                md += p.display ? "\n\nARGOSMATH" + i + "Z\n\n" : "ARGOSMATH" + i + "Z";
+        });
+        let html = markdownToHtml(md);
+        const img = p => "<a href=\"latex:" + encodeURIComponent(p.m) + "\"><img src=\"" + p.src + "\" width=\"" + p.w
+                         + "\" height=\"" + p.h + "\" style=\"vertical-align: middle\"></a>";
+        // Display formulas: their own centred paragraph (&nbsp; around it: Qt won't centre a lone image).
+        html = html.replace(/<p([^>]*)>\s*ARGOSMATH(\d+)Z\s*<\/p>/g,
+                            (all, attrs, i) => "<p" + attrs.replace(/margin-top:\d+px/, "margin-top:12px").replace(/margin-bottom:\d+px/, "margin-bottom:12px")
+                                               + " align=\"center\">&nbsp;" + img(pieces[i]) + "&nbsp;</p>");
+        return html.replace(/ARGOSMATH(\d+)Z/g, (all, i) => img(pieces[i]));
     }
 
     function setModel(value) {
@@ -754,13 +808,13 @@ PluginComponent {
             return false;
 
         const win = includeWindow ? windowText : "";   // sent along invisibly
-        messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, window: win, steps: "", isError: false });
-        messages.append({ role: "assistant", text: "", image: "", quote: "", window: "", steps: "", isError: false });
+        messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, window: win, steps: "", isError: false, math: "" });
+        messages.append({ role: "assistant", text: "", image: "", quote: "", window: "", steps: "", isError: false, math: "" });
         if (!chatId)
             chatTitle = shortTitle(text || pendingQuote);
 
         const cmd = ["python3", backend, "ask", "--model=" + model, "--effort=" + effort,
-                     "--max-image-side=" + maxImageSide];
+                     "--max-image-side=" + maxImageSide, "--math=" + mathStyle];
         if (chatId)
             cmd.push("--chat=" + chatId);
         if (pendingImage)
@@ -860,6 +914,8 @@ PluginComponent {
             if (ev.tokens)
                 tokens = ev.tokens;
             setLastText(ev.text, false);
+            if (messages.count > 0)
+                messages.setProperty(messages.count - 1, "math", ev.math ? JSON.stringify(ev.math) : "");
             scrollToEnd();
             if (ev.chat && !ev.stopped && messages.count === 2)
                 requestTitle(ev.chat);   // first answer finished: ask Haiku for a short title
@@ -928,13 +984,13 @@ PluginComponent {
     function openChat(id) {
         if (busy)
             return;
-        Proc.runCommand("duxAi.load", ["python3", backend, "load", id], out => {
+        Proc.runCommand("duxAi.load", ["python3", backend, "load", id, "--math=" + mathStyle], out => {
             const ev = lastJson(out);
             if (ev?.type !== "chat")
                 return;
             messages.clear();
             for (const m of ev.chat.messages)
-                messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", window: m.window || "", steps: (m.steps || []).join("\n"), isError: false });
+                messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", window: m.window || "", steps: (m.steps || []).join("\n"), isError: false, math: m.math ? JSON.stringify(m.math) : "" });
             chatId = ev.chat.id;
             chatTitle = ev.chat.title;
             tokens = ev.tokens || null;
@@ -1679,6 +1735,7 @@ PluginComponent {
                             required property string window
                             required property string steps
                             required property bool isError
+                            required property string math
                             readonly property bool isUser: role === "user"
                             readonly property bool isLast: index === messages.count - 1
 
@@ -1840,15 +1897,35 @@ PluginComponent {
                                         id: body
                                         visible: msg.text !== ""
                                         width: msg.isUser ? Math.min(implicitWidth, content.width) : content.width
-                                        text: msg.text
-                                        textFormat: msg.isUser ? TextEdit.PlainText : TextEdit.MarkdownText
+                                        // Answers: Markdown turned into rich text, with formulas drawn
+                                        // (set by refresh(), not a binding: the converter would loop).
+                                        textFormat: msg.isUser ? TextEdit.PlainText : TextEdit.RichText
+                                        function refresh() {
+                                            text = msg.isUser ? msg.text : root.answerHtml(msg.text, msg.math);
+                                        }
+                                        Component.onCompleted: refresh()
+                                        Connections {
+                                            target: msg
+                                            function onTextChanged() { body.refresh(); }
+                                            function onMathChanged() { body.refresh(); }
+                                        }
                                         wrapMode: TextEdit.Wrap
                                         readOnly: true
                                         selectByMouse: true
                                         color: msg.isError ? Theme.error : Theme.onSurface
                                         selectionColor: Theme.withAlpha(Theme.primary, 0.35)
                                         font.pixelSize: root.fsBody
-                                        onLinkActivated: link => Qt.openUrlExternally(link)
+                                        onLinkActivated: link => {
+                                            if (link.startsWith("latex:")) {      // a formula: copy its LaTeX
+                                                Quickshell.execDetached(["dms", "cl", "copy", decodeURIComponent(link.slice(6))]);
+                                                ToastService.showInfo("Copied LaTeX");
+                                            } else {
+                                                Qt.openUrlExternally(link);
+                                            }
+                                        }
+                                        HoverHandler {
+                                            cursorShape: body.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.IBeamCursor
+                                        }
                                     }
                                 }
                             }

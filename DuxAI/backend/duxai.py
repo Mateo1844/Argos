@@ -20,6 +20,7 @@ to shrink big screenshots).
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -103,6 +104,101 @@ def emit(**obj):
 
 def now():
     return int(time.time())
+
+
+# ------------------------------------------------------------------ math --
+# The chat can't run LaTeX, so formulas in an answer ($...$, $$...$$, \(...\),
+# \[...\]) are drawn as small vector images (with the pure-Python package
+# ziamath, STIX math font) in the chat's text colour and size, and shown in
+# place of the code. The answer itself keeps the LaTeX (copy button, history).
+
+MATH_SCALE = 3      # images are 3x their shown size: sharp at any display scaling
+
+_FENCE = re.compile(r"```.*?(?:```|$)|`[^`\n]*`", re.S)
+_MATH = re.compile(
+    r"\$\$(?P<d1>.+?)\$\$"                              # $$ display $$
+    r"|\\\[(?P<d2>.+?)\\\]"                             # \[ display \]
+    r"|\\\((?P<i2>.+?)\\\)"                             # \( inline \)
+    r"|(?<![\\$\w])\$(?P<i1>[^\s$](?:[^$\n]*?[^\s$\\])?)\$(?!\d)",   # $inline$ (not "$5 and $10")
+    re.S)
+
+
+def split_math(text):
+    """[("text", str) | ("math", latex, display)] pieces; code is left alone."""
+    pieces, pos = [], 0
+    # Look for formulas with code blanked out (same length, so positions match).
+    masked = _FENCE.sub(lambda m: "\0" * len(m.group(0)), text)
+    for m in _MATH.finditer(masked):
+        if "\0" in m.group(0):
+            continue
+        if m.start() > pos:
+            pieces.append(("text", text[pos:m.start()]))
+        latex = next(g for g in m.groups() if g is not None).strip()
+        pieces.append(("math", latex, bool(m.group("d1") or m.group("d2"))))
+        pos = m.end()
+    if pos < len(text):
+        pieces.append(("text", text[pos:]))
+    return pieces
+
+
+def render_math(text, style):
+    """The answer as pieces for the chat: {"t": text} or {"m": latex, "display",
+    "src", "w", "h"} (an SVG file, shown at w x h). None if there's no math or
+    it can't be drawn (then the chat shows the text as it is)."""
+    if not style or "$" not in text and "\\(" not in text and "\\[" not in text:
+        return None
+    pieces = split_math(text)
+    if not any(p[0] == "math" for p in pieces):
+        return None
+    try:
+        import ziamath
+    except ImportError:
+        return None
+    ziamath.config.svg2 = False        # plain SVG 1.1: Qt can't draw <symbol>/<use>
+    try:
+        color, size, xheight = style.split(",")
+        size, xheight = float(size), float(xheight)
+    except ValueError:
+        return None
+    folder = DATA_DIR / "math"
+    folder.mkdir(parents=True, exist_ok=True)
+    out = []
+    for piece in pieces:
+        if piece[0] == "text":
+            out.append({"t": piece[1]})
+            continue
+        latex, display = piece[1], piece[2]
+        key = hashlib.sha1(f"{latex}|{display}|{style}|{MATH_SCALE}".encode()).hexdigest()[:16]
+        path, meta = folder / f"{key}.svg", folder / f"{key}.json"
+        try:
+            if path.exists() and meta.exists():
+                w, h = json.loads(meta.read_text())
+            else:
+                svg, w, h = _draw_math(ziamath, latex, display, color, size, xheight)
+                path.write_text(svg, encoding="utf-8")
+                meta.write_text(json.dumps([w, h]))
+            out.append({"m": latex, "display": display, "src": path.as_uri(), "w": round(w, 1), "h": round(h, 1)})
+        except Exception:  # noqa: BLE001 - a formula ziamath can't draw stays as code
+            out.append({"t": f"$${latex}$$" if display else f"${latex}$"})
+    return out
+
+
+def _draw_math(ziamath, latex, display, color, size, xheight):
+    m = ziamath.Latex(latex, size=size * 1.08, color=color, inline=not display)
+    svg = m.svg()
+    w, h = m.getsize()
+    descent = -m.getyofst()
+    # The chat centres an image at half the x-height above the text's baseline:
+    # pad it so the formula's own baseline lands on the text's baseline.
+    diff = xheight - (h - descent) + descent
+    top, bottom = (diff, 0.0) if diff > 0 else (0.0, -diff)
+    vb = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"', svg)
+    x0, y0, vw, vh = map(float, vb.groups())
+    svg = svg.replace(vb.group(0), f'viewBox="{x0} {y0 - top:.3f} {vw} {vh + top + bottom:.3f}"', 1)
+    shown_h = h + top + bottom
+    svg = re.sub(r'width="[\d.]+" height="[\d.]+"',
+                 f'width="{w * MATH_SCALE:.2f}" height="{shown_h * MATH_SCALE:.2f}"', svg, count=1)
+    return svg, w, shown_h
 
 
 # --------------------------------------------------------- usage limits --
@@ -696,7 +792,7 @@ def cmd_ask(args):
         chat["updated"] = now()
         save_chat(chat)
         emit(type="done", chat=chat["id"], text=final, usage=usage, cost=cost, tokens=token_stats(chat),
-             steps=steps)
+             steps=steps, math=render_math(final, args.math))
         return 0
 
     if stopped:
@@ -704,8 +800,8 @@ def cmd_ask(args):
             chat["messages"].append({"role": "assistant", "text": text + "\n\n*(stopped)*", "time": now(),
                                      "steps": steps})
         save_chat(chat)
-        emit(type="done", chat=chat["id"], text=text + ("\n\n*(stopped)*" if text else "*(stopped)*"),
-             stopped=True)
+        shown = text + ("\n\n*(stopped)*" if text else "*(stopped)*")
+        emit(type="done", chat=chat["id"], text=shown, stopped=True, math=render_math(shown, args.math))
         return 0
 
     errfile.seek(0)
@@ -945,6 +1041,9 @@ def cmd_load(args):
     if chat is None:
         emit(type="error", message="Chat not found")
         return 1
+    for msg in chat.get("messages", []):
+        if msg.get("role") == "assistant":
+            msg["math"] = render_math(msg.get("text") or "", args.math)
     emit(type="chat", chat=chat, tokens=token_stats(chat))
     return 0
 
@@ -1022,6 +1121,7 @@ def main(argv=None):
     ask.add_argument("--web", action="store_true", help="allow web search tools")
     ask.add_argument("--max-image-side", type=int, default=1280)
     ask.add_argument("--extra", default="", help="extra system prompt instructions")
+    ask.add_argument("--math", default="", help="draw formulas: COLOR,FONT_PX,X_HEIGHT_PX")
     ask.add_argument("prompt", nargs="?", default="")
     ask.set_defaults(func=cmd_ask)
 
@@ -1029,6 +1129,7 @@ def main(argv=None):
     sub.add_parser("limits", help="last known 5-hour / weekly usage").set_defaults(func=cmd_limits)
     load = sub.add_parser("load")
     load.add_argument("id")
+    load.add_argument("--math", default="", help="draw formulas: COLOR,FONT_PX,X_HEIGHT_PX")
     load.set_defaults(func=cmd_load)
     title = sub.add_parser("title", help="generate a short title for a chat")
     title.add_argument("id")
