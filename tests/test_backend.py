@@ -1,6 +1,7 @@
 """Backend tests. Run with:  python3 -m unittest discover tests"""
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -124,6 +125,11 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(side % 4, 0)
         self.assertEqual(mod.render_math("So $E=mc^2$.", "#ffffff,15,8,1.25"), pieces)   # cached
         self.assertIsNone(mod.render_math("No math, just $5.", "#ffffff,15,8,1.25"))
+        # Fraction lines are whole screen pixels thick (crisp, not a grey smear).
+        frac = mod.render_math("$\\frac{a}{b}$", "#ffffff,15,8,1.25")[0]
+        svg = Path(frac["src"].removeprefix("file://")).read_text()
+        height = float(re.search(r'<rect [^>]*height="([\d.]+)"', svg).group(1)) * 1.25
+        self.assertAlmostEqual(height, round(height), places=2)
 
     def _module(self):
         import importlib.util

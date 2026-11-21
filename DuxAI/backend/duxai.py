@@ -142,7 +142,7 @@ def split_math(text):
     return pieces
 
 
-MATH_VERSION = 4    # bump when formulas are drawn differently: old drawings are then deleted
+MATH_VERSION = 5    # bump when formulas are drawn differently: old drawings are then deleted
 
 
 def _maybe_math(text):
@@ -221,9 +221,43 @@ def _draw_math(ziamath, latex, display, color, size, xheight, scale):
     svg = re.sub(r'width="[\d.]+" height="[\d.]+"', f'width="{round(W * scale)}" height="{round(H * scale)}"', svg, count=1)
     # A hair of outline: the math font is thin, and next to (hinted) UI text it
     # looks grey and soft without it.
-    svg = re.sub(r"(<svg [^>]*>)", lambda g: g.group(1) + f'<g stroke="{color}" stroke-width="{size * 0.017:.3f}" '
+    outline = size * 0.017
+    svg = _snap_bars(svg, y0 - top, scale, outline)
+    svg = re.sub(r"(<svg [^>]*>)", lambda g: g.group(1) + f'<g stroke="{color}" stroke-width="{outline:.3f}" '
                  'stroke-linejoin="round">', svg, count=1)
     return svg[:svg.rindex("</svg>")] + "</g></svg>"
+
+
+def _snap_bars(svg, top, scale, outline):
+    """Put the horizontal bars (fraction lines, root tops, minus and equals
+    signs) on whole screen pixels, like hinted text does. Otherwise a 1.4 px
+    line lands across two pixel rows and shows as a grey smear. top is the
+    image's top edge in SVG units (= px)."""
+    def bar(y1, y2):
+        """A bar's top and bottom, snapped (as thick as it looks with the outline)."""
+        rows = max(1, round((y2 - y1 + outline) * scale))
+        first = round(((y1 + y2) / 2 - top) * scale - rows / 2)
+        return top + first / scale, top + (first + rows) / scale
+
+    def rect(g):
+        y1, y2 = bar(float(g["y"]), float(g["y"]) + float(g["h"]))
+        return f'<rect x="{g["x"]}" y="{y1:.4f}" width="{g["w"]}" height="{y2 - y1:.4f}" stroke="none"'
+
+    def path(g):
+        """Paths that are only plain rectangles ("-", "="); others stay as they are."""
+        out = []
+        for sub in re.findall(r"M[^M]*", g[1]):
+            nums = [float(n) for n in re.findall(r"-?[\d.]+", sub)]
+            pts = list(zip(nums[::2], nums[1::2]))
+            ys = sorted({y for _, y in pts})
+            if re.sub(r"[-\d.\s]", "", sub).rstrip("Z") not in ("MLLL", "MLLLL") or len({x for x, _ in pts}) != 2 or len(ys) != 2:
+                return g[0]
+            y1, y2 = bar(*ys)
+            out.append(" ".join(f"{'L' if i else 'M'} {x} {y1 if y == ys[0] else y2:.4f}" for i, (x, y) in enumerate(pts)) + " Z")
+        return f'<path d="{" ".join(out)}" stroke="none"'
+
+    svg = re.sub(r'<rect x="(?P<x>[-\d.]+)" y="(?P<y>[-\d.]+)" width="(?P<w>[\d.]+)" height="(?P<h>[\d.]+)"', rect, svg)
+    return re.sub(r'<path d="([^"]*)"', path, svg)
 
 
 # --------------------------------------------------------- usage limits --

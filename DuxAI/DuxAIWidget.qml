@@ -498,7 +498,7 @@ PluginComponent {
     signal scrollToEnd
 
     ListModel {
-        id: messages   // { role, text, image, quote, window, steps, isError, math }
+        id: messages   // { role, text, image, quote, window, steps, isError, math, html }
     }
 
     // ---- math: formulas drawn as images by the backend (see render_math) ----
@@ -826,8 +826,8 @@ PluginComponent {
             return false;
 
         const win = includeWindow ? windowText : "";   // sent along invisibly
-        messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, window: win, steps: "", isError: false, math: "" });
-        messages.append({ role: "assistant", text: "", image: "", quote: "", window: "", steps: "", isError: false, math: "" });
+        messages.append({ role: "user", text: text, image: pendingImage, quote: pendingQuote, window: win, steps: "", isError: false, math: "", html: "" });
+        messages.append({ role: "assistant", text: "", image: "", quote: "", window: "", steps: "", isError: false, math: "", html: "" });
         if (!chatId)
             chatTitle = shortTitle(text || pendingQuote);
 
@@ -882,8 +882,15 @@ PluginComponent {
         const last = messages.count - 1;
         if (last < 0)
             return;
-        messages.setProperty(last, "text", text);
+        setAnswer(last, text, messages.get(last).math);
         messages.setProperty(last, "isError", !!isError);
+    }
+
+    // An answer's text, its formulas (JSON from the backend) and the rich text
+    // the chat shows. Made here, once per change: in the chat list itself it
+    // would be made again for every message that scrolls into view.
+    function setAnswer(i, text, math) {
+        messages.set(i, { text: text, math: math, html: answerHtml(text, math) });
     }
 
     function handleEvent(line) {
@@ -900,7 +907,7 @@ PluginComponent {
             break;
         case "text":
             if (last >= 0)
-                messages.setProperty(last, "text", messages.get(last).text + ev.text);
+                setAnswer(last, messages.get(last).text + ev.text, messages.get(last).math);
             status = "";
             scrollToEnd();
             break;
@@ -924,8 +931,8 @@ PluginComponent {
             limits = ev.limits || {};
             break;
         case "math":            // formulas drawn while the answer streams in
-            if (messages.count > 0)
-                messages.setProperty(messages.count - 1, "math", JSON.stringify(ev.math));
+            if (last >= 0)
+                setAnswer(last, messages.get(last).text, JSON.stringify(ev.math));
             break;
         case "permission_cancel":
             if (permission && permission.id === ev.id)
@@ -935,9 +942,10 @@ PluginComponent {
             gotFinal = true;
             if (ev.tokens)
                 tokens = ev.tokens;
-            setLastText(ev.text, false);
-            if (messages.count > 0)
-                messages.setProperty(messages.count - 1, "math", ev.math ? JSON.stringify(ev.math) : "");
+            if (last >= 0) {
+                setAnswer(last, ev.text, ev.math ? JSON.stringify(ev.math) : "");
+                messages.setProperty(last, "isError", false);
+            }
             scrollToEnd();
             if (ev.chat && !ev.stopped && messages.count === 2)
                 requestTitle(ev.chat);   // first answer finished: ask Haiku for a short title
@@ -1011,8 +1019,12 @@ PluginComponent {
             if (ev?.type !== "chat")
                 return;
             messages.clear();
-            for (const m of ev.chat.messages)
-                messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", window: m.window || "", steps: (m.steps || []).join("\n"), isError: false, math: m.math ? JSON.stringify(m.math) : "" });
+            for (const m of ev.chat.messages) {
+                const math = m.math ? JSON.stringify(m.math) : "";
+                messages.append({ role: m.role, text: m.text || "", image: m.image || "", quote: m.quote || "", window: m.window || "",
+                                  steps: (m.steps || []).join("\n"), isError: false, math: math,
+                                  html: m.role === "user" ? "" : answerHtml(m.text || "", math) });
+            }
             chatId = ev.chat.id;
             chatTitle = ev.chat.title;
             tokens = ev.tokens || null;
@@ -1764,7 +1776,7 @@ PluginComponent {
                             required property string window
                             required property string steps
                             required property bool isError
-                            required property string math
+                            required property string html
                             readonly property bool isUser: role === "user"
                             readonly property bool isLast: index === messages.count - 1
 
@@ -1926,18 +1938,9 @@ PluginComponent {
                                         id: body
                                         visible: msg.text !== ""
                                         width: msg.isUser ? Math.min(implicitWidth, content.width) : content.width
-                                        // Answers: Markdown turned into rich text, with formulas drawn
-                                        // (set by refresh(), not a binding: the converter would loop).
+                                        // Answers: Markdown turned into rich text, with formulas drawn (see setAnswer).
+                                        text: msg.isUser ? msg.text : msg.html
                                         textFormat: msg.isUser ? TextEdit.PlainText : TextEdit.RichText
-                                        function refresh() {
-                                            text = msg.isUser ? msg.text : root.answerHtml(msg.text, msg.math);
-                                        }
-                                        Component.onCompleted: refresh()
-                                        Connections {
-                                            target: msg
-                                            function onTextChanged() { body.refresh(); }
-                                            function onMathChanged() { body.refresh(); }
-                                        }
                                         wrapMode: TextEdit.Wrap
                                         readOnly: true
                                         selectByMouse: true
