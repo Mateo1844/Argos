@@ -304,6 +304,24 @@ PluginComponent {
         }
     }
 
+    // Thin, rounded scrollbar: only the handle, shown while scrolling or hovered.
+    component ThinScrollBar: ScrollBar {
+        id: bar
+        leftPadding: 3
+        rightPadding: 3
+        topPadding: 3
+        bottomPadding: 3
+        background: Item {}
+        contentItem: Rectangle {
+            implicitWidth: bar.hovered || bar.pressed ? 6 : 4
+            radius: width / 2
+            color: Theme.withAlpha(Theme.onSurface, bar.pressed ? 0.5 : (bar.hovered ? 0.35 : 0.22))
+            opacity: bar.size < 1 && (bar.active || bar.hovered) ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 250 } }
+            Behavior on implicitWidth { NumberAnimation { duration: 120 } }
+        }
+    }
+
     // Round colored circle with the logo inside (bar, chat header, empty
     // screen). Shows a white copy of assets/logo.svg if it exists, otherwise
     // a sparkle icon. (Inline component: no extra file for QML to find.)
@@ -1762,7 +1780,9 @@ PluginComponent {
                                     root.followEnd = chatList.nearEnd();
                             }
                         }
-                        ScrollBar.vertical: ScrollBar {
+                        // Stops above the input box (the list itself runs on under it).
+                        ScrollBar.vertical: ThinScrollBar {
+                            bottomPadding: win.listOverlap + 3
                             onPressedChanged: root.followEnd = pressed ? false : chatList.nearEnd()
                         }
 
@@ -1941,6 +1961,12 @@ PluginComponent {
                                         // Answers: Markdown turned into rich text, with formulas drawn (see setAnswer).
                                         text: msg.isUser ? msg.text : msg.html
                                         textFormat: msg.isUser ? TextEdit.PlainText : TextEdit.RichText
+                                        // Formulas are drawn at exactly their size in screen pixels: show
+                                        // them pixel for pixel. Smoothing blurs any that land between pixels,
+                                        // and the 1/128 px nudge keeps them off the exact middle between two
+                                        // (where the graphics card may round some rows one way, some the other).
+                                        smooth: false
+                                        transform: Translate { x: 1 / 128; y: 1 / 128 }
                                         wrapMode: TextEdit.Wrap
                                         readOnly: true
                                         selectByMouse: true
@@ -2003,7 +2029,7 @@ PluginComponent {
                         spacing: 4
                         model: root.historyItems
                         boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.vertical: ScrollBar {}
+                        ScrollBar.vertical: ThinScrollBar {}
 
                         delegate: Rectangle {
                             id: row
