@@ -1687,6 +1687,9 @@ PluginComponent {
                         clip: true
                         spacing: Theme.spacingM
                         model: messages
+                        // Keep every message built (a chat is small): the list then knows its real
+                        // height, so the scrollbar doesn't jump while you scroll.
+                        cacheBuffer: 1000000
                         boundsBehavior: Flickable.StopAtBounds
                         // Scrolling up stops the auto-follow; reaching the bottom again resumes it.
                         onMovementStarted: root.followEnd = false
